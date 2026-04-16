@@ -65,6 +65,8 @@ use codex_protocol::protocol::FileChange;
 use codex_protocol::protocol::McpAuthStatus;
 use codex_protocol::protocol::McpInvocation;
 use codex_protocol::protocol::SessionConfiguredEvent;
+use codex_protocol::protocol::TerminalInputRecord;
+use codex_protocol::protocol::TerminalInputRedactionKind;
 use codex_protocol::request_user_input::RequestUserInputAnswer;
 use codex_protocol::request_user_input::RequestUserInputQuestion;
 use codex_protocol::user_input::TextElement;
@@ -592,14 +594,14 @@ impl HistoryCell for PrefixedWrappedHistoryCell {
 #[derive(Debug)]
 pub(crate) struct UnifiedExecInteractionCell {
     command_display: Option<String>,
-    stdin: String,
+    input: TerminalInputRecord,
 }
 
 impl UnifiedExecInteractionCell {
-    pub(crate) fn new(command_display: Option<String>, stdin: String) -> Self {
+    pub(crate) fn new(command_display: Option<String>, input: TerminalInputRecord) -> Self {
         Self {
             command_display,
-            stdin,
+            input,
         }
     }
 }
@@ -610,7 +612,7 @@ impl HistoryCell for UnifiedExecInteractionCell {
             return Vec::new();
         }
         let wrap_width = width as usize;
-        let waited_only = self.stdin.is_empty();
+        let waited_only = self.input.is_empty_poll();
 
         let mut header_spans = if waited_only {
             vec!["• Waited for background terminal".bold()]
@@ -633,11 +635,20 @@ impl HistoryCell for UnifiedExecInteractionCell {
             return out;
         }
 
-        let input_lines: Vec<Line<'static>> = self
-            .stdin
-            .lines()
-            .map(|line| Line::from(line.to_string()))
-            .collect();
+        let input_lines: Vec<Line<'static>> = match &self.input {
+            TerminalInputRecord::Plaintext { text } => text
+                .lines()
+                .map(|line| Line::from(line.to_string()))
+                .collect(),
+            TerminalInputRecord::Redacted { len, kind } => {
+                vec![Line::from(format!(
+                    "[redacted {}: {} chars]",
+                    terminal_redaction_kind_label(kind.clone()),
+                    len
+                ))]
+            }
+            TerminalInputRecord::EmptyPoll => Vec::new(),
+        };
 
         let input_wrapped = adaptive_wrap_lines(
             input_lines,
@@ -652,9 +663,18 @@ impl HistoryCell for UnifiedExecInteractionCell {
 
 pub(crate) fn new_unified_exec_interaction(
     command_display: Option<String>,
-    stdin: String,
+    input: TerminalInputRecord,
 ) -> UnifiedExecInteractionCell {
-    UnifiedExecInteractionCell::new(command_display, stdin)
+    UnifiedExecInteractionCell::new(command_display, input)
+}
+
+fn terminal_redaction_kind_label(kind: TerminalInputRedactionKind) -> &'static str {
+    match kind {
+        TerminalInputRedactionKind::Password => "password",
+        TerminalInputRedactionKind::Passphrase => "passphrase",
+        TerminalInputRedactionKind::Pin => "PIN",
+        TerminalInputRedactionKind::Unknown => "secret",
+    }
 }
 
 #[derive(Debug)]
@@ -3037,8 +3057,12 @@ mod tests {
 
     #[test]
     fn unified_exec_interaction_cell_renders_input() {
-        let cell =
-            new_unified_exec_interaction(Some("echo hello".to_string()), "ls\npwd".to_string());
+        let cell = new_unified_exec_interaction(
+            Some("echo hello".to_string()),
+            TerminalInputRecord::Plaintext {
+                text: "ls\npwd".to_string(),
+            },
+        );
         let lines = render_transcript(&cell);
         assert_eq!(
             lines,
@@ -3052,7 +3076,10 @@ mod tests {
 
     #[test]
     fn unified_exec_interaction_cell_renders_wait() {
-        let cell = new_unified_exec_interaction(/*command_display*/ None, String::new());
+        let cell = new_unified_exec_interaction(
+            /*command_display*/ None,
+            TerminalInputRecord::EmptyPoll,
+        );
         let lines = render_transcript(&cell);
         assert_eq!(lines, vec!["• Waited for background terminal"]);
     }
@@ -3461,7 +3488,12 @@ mod tests {
     fn unified_exec_interaction_cell_does_not_split_url_like_stdin_token() {
         let url_like =
             "example.test/api/v1/projects/alpha-team/releases/2026-02-17/builds/1234567890";
-        let cell = UnifiedExecInteractionCell::new(Some("true".to_string()), url_like.to_string());
+        let cell = UnifiedExecInteractionCell::new(
+            Some("true".to_string()),
+            TerminalInputRecord::Plaintext {
+                text: url_like.to_string(),
+            },
+        );
         let rendered = render_lines(&cell.display_lines(/*width*/ 24));
 
         assert_eq!(
@@ -3516,7 +3548,9 @@ mod tests {
         let url_like = "example.test/api/v1/projects/alpha-team/releases/2026-02-17/builds/1234567890/artifacts/reports/performance/summary/detail/with/a/very/long/path";
         let cell: Box<dyn HistoryCell> = Box::new(UnifiedExecInteractionCell::new(
             Some("true".to_string()),
-            url_like.to_string(),
+            TerminalInputRecord::Plaintext {
+                text: url_like.to_string(),
+            },
         ));
 
         let width: u16 = 24;

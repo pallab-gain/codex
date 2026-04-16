@@ -2349,15 +2349,90 @@
         }
       ]
     },
+    "TerminalInputRecord": {
+      "oneOf": [
+        {
+          "properties": {
+            "text": {
+              "type": "string"
+            },
+            "type": {
+              "enum": [
+                "plaintext"
+              ],
+              "title": "PlaintextTerminalInputRecordType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "text",
+            "type"
+          ],
+          "title": "PlaintextTerminalInputRecord",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "$ref": "#/definitions/TerminalInputRedactionKind"
+            },
+            "len": {
+              "format": "uint",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "type": {
+              "enum": [
+                "redacted"
+              ],
+              "title": "RedactedTerminalInputRecordType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "len",
+            "type"
+          ],
+          "title": "RedactedTerminalInputRecord",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "type": {
+              "enum": [
+                "empty_poll"
+              ],
+              "title": "EmptyPollTerminalInputRecordType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "title": "EmptyPollTerminalInputRecord",
+          "type": "object"
+        }
+      ]
+    },
+    "TerminalInputRedactionKind": {
+      "enum": [
+        "password",
+        "passphrase",
+        "pin",
+        "unknown"
+      ],
+      "type": "string"
+    },
     "TerminalInteractionNotification": {
       "properties": {
+        "input": {
+          "$ref": "#/definitions/TerminalInputRecord"
+        },
         "itemId": {
           "type": "string"
         },
         "processId": {
-          "type": "string"
-        },
-        "stdin": {
           "type": "string"
         },
         "threadId": {
@@ -2368,9 +2443,9 @@
         }
       },
       "required": [
+        "input",
         "itemId",
         "processId",
-        "stdin",
         "threadId",
         "turnId"
       ],
@@ -2573,6 +2648,76 @@
         }
       },
       "required": [
+        "threadId"
+      ],
+      "type": "object"
+    },
+    "ThreadBackgroundTerminalAttachmentChangedNotification": {
+      "properties": {
+        "attached": {
+          "type": "boolean"
+        },
+        "processId": {
+          "type": "string"
+        },
+        "secureInputPrompt": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/TerminalInputRedactionKind"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "attached",
+        "processId",
+        "threadId"
+      ],
+      "type": "object"
+    },
+    "ThreadBackgroundTerminalExitedNotification": {
+      "properties": {
+        "exitCode": {
+          "format": "int32",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "processId": {
+          "type": "string"
+        },
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "processId",
+        "threadId"
+      ],
+      "type": "object"
+    },
+    "ThreadBackgroundTerminalOutputDeltaNotification": {
+      "properties": {
+        "deltaBase64": {
+          "type": "string"
+        },
+        "processId": {
+          "type": "string"
+        },
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "deltaBase64",
+        "processId",
         "threadId"
       ],
       "type": "object"
@@ -4576,6 +4721,66 @@
         "params"
       ],
       "title": "Item/commandExecution/terminalInteractionNotification",
+      "type": "object"
+    },
+    {
+      "properties": {
+        "method": {
+          "enum": [
+            "thread/backgroundTerminal/outputDelta"
+          ],
+          "title": "Thread/backgroundTerminal/outputDeltaNotificationMethod",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/definitions/ThreadBackgroundTerminalOutputDeltaNotification"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ],
+      "title": "Thread/backgroundTerminal/outputDeltaNotification",
+      "type": "object"
+    },
+    {
+      "properties": {
+        "method": {
+          "enum": [
+            "thread/backgroundTerminal/exited"
+          ],
+          "title": "Thread/backgroundTerminal/exitedNotificationMethod",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/definitions/ThreadBackgroundTerminalExitedNotification"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ],
+      "title": "Thread/backgroundTerminal/exitedNotification",
+      "type": "object"
+    },
+    {
+      "properties": {
+        "method": {
+          "enum": [
+            "thread/backgroundTerminal/attachmentChanged"
+          ],
+          "title": "Thread/backgroundTerminal/attachmentChangedNotificationMethod",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/definitions/ThreadBackgroundTerminalAttachmentChangedNotification"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ],
+      "title": "Thread/backgroundTerminal/attachmentChangedNotification",
       "type": "object"
     },
     {

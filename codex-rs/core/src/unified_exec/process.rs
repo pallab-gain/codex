@@ -24,6 +24,7 @@ use codex_sandboxing::SandboxType;
 use codex_utils_output_truncation::formatted_truncate_text;
 use codex_utils_pty::ExecCommandSession;
 use codex_utils_pty::SpawnedPty;
+use codex_utils_pty::TerminalSize;
 
 use super::UNIFIED_EXEC_OUTPUT_MAX_TOKENS;
 use super::UnifiedExecError;
@@ -151,6 +152,13 @@ impl UnifiedExecProcess {
                     Err(err) => Err(UnifiedExecError::process_failed(err.to_string())),
                 }
             }
+        }
+    }
+
+    pub(super) fn resize(&self, size: TerminalSize) -> anyhow::Result<()> {
+        match &self.process_handle {
+            ProcessHandle::Local(process_handle) => process_handle.resize(size),
+            ProcessHandle::ExecServer(_) => anyhow::bail!("resize unsupported"),
         }
     }
 

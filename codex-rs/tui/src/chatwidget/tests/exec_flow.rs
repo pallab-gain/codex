@@ -619,7 +619,9 @@ async fn unified_exec_interaction_after_task_complete_is_suppressed() {
         msg: EventMsg::TerminalInteraction(TerminalInteractionEvent {
             call_id: "call-1".to_string(),
             process_id: "proc-1".to_string(),
-            stdin: "ls\n".to_string(),
+            input: TerminalInputRecord::Plaintext {
+                text: "ls\n".to_string(),
+            },
         }),
     });
 
@@ -724,7 +726,7 @@ async fn unified_exec_wait_status_header_updates_on_late_command_display() {
     chat.on_terminal_interaction(TerminalInteractionEvent {
         call_id: "call-1".to_string(),
         process_id: "proc-1".to_string(),
-        stdin: String::new(),
+        input: TerminalInputRecord::EmptyPoll,
     });
 
     assert!(chat.active_cell.is_none());

@@ -3170,6 +3170,182 @@ pub struct ThreadBackgroundTerminalsCleanResponse {}
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]
+pub struct BackgroundTerminal {
+    pub process_id: String,
+    pub command: String,
+    pub tty: bool,
+    pub attached: bool,
+    pub secure_input_prompt: Option<TerminalInputRedactionKind>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct ThreadBackgroundTerminalsListParams {
+    pub thread_id: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct ThreadBackgroundTerminalsListResponse {
+    pub data: Vec<BackgroundTerminal>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct ThreadBackgroundTerminalAttachParams {
+    pub thread_id: String,
+    pub process_id: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct ThreadBackgroundTerminalAttachResponse {
+    pub terminal: BackgroundTerminal,
+    #[ts(type = "string")]
+    pub output_base64: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct ThreadBackgroundTerminalDetachParams {
+    pub thread_id: String,
+    pub process_id: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct ThreadBackgroundTerminalDetachResponse {}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct ThreadBackgroundTerminalWriteParams {
+    pub thread_id: String,
+    pub process_id: String,
+    #[ts(type = "string")]
+    pub data_base64: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct ThreadBackgroundTerminalWriteResponse {}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct ThreadBackgroundTerminalWriteSecretParams {
+    pub thread_id: String,
+    pub process_id: String,
+    #[ts(type = "string")]
+    pub data_base64: String,
+    pub kind: TerminalInputRedactionKind,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct ThreadBackgroundTerminalWriteSecretResponse {}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct ThreadBackgroundTerminalResizeParams {
+    pub thread_id: String,
+    pub process_id: String,
+    pub size: CommandExecTerminalSize,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct ThreadBackgroundTerminalResizeResponse {}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export_to = "v2/")]
+pub enum TerminalInputRedactionKind {
+    Password,
+    Passphrase,
+    Pin,
+    Unknown,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(tag = "type", rename_all = "snake_case")]
+#[ts(tag = "type", rename_all = "snake_case", export_to = "v2/")]
+pub enum TerminalInputRecord {
+    Plaintext {
+        text: String,
+    },
+    Redacted {
+        len: usize,
+        kind: TerminalInputRedactionKind,
+    },
+    EmptyPoll,
+}
+
+impl From<codex_protocol::protocol::TerminalInputRedactionKind> for TerminalInputRedactionKind {
+    fn from(value: codex_protocol::protocol::TerminalInputRedactionKind) -> Self {
+        match value {
+            codex_protocol::protocol::TerminalInputRedactionKind::Password => Self::Password,
+            codex_protocol::protocol::TerminalInputRedactionKind::Passphrase => Self::Passphrase,
+            codex_protocol::protocol::TerminalInputRedactionKind::Pin => Self::Pin,
+            codex_protocol::protocol::TerminalInputRedactionKind::Unknown => Self::Unknown,
+        }
+    }
+}
+
+impl From<TerminalInputRedactionKind> for codex_protocol::protocol::TerminalInputRedactionKind {
+    fn from(value: TerminalInputRedactionKind) -> Self {
+        match value {
+            TerminalInputRedactionKind::Password => Self::Password,
+            TerminalInputRedactionKind::Passphrase => Self::Passphrase,
+            TerminalInputRedactionKind::Pin => Self::Pin,
+            TerminalInputRedactionKind::Unknown => Self::Unknown,
+        }
+    }
+}
+
+impl From<codex_protocol::protocol::TerminalInputRecord> for TerminalInputRecord {
+    fn from(value: codex_protocol::protocol::TerminalInputRecord) -> Self {
+        match value {
+            codex_protocol::protocol::TerminalInputRecord::Plaintext { text } => {
+                Self::Plaintext { text }
+            }
+            codex_protocol::protocol::TerminalInputRecord::Redacted { len, kind } => {
+                Self::Redacted {
+                    len,
+                    kind: kind.into(),
+                }
+            }
+            codex_protocol::protocol::TerminalInputRecord::EmptyPoll => Self::EmptyPoll,
+        }
+    }
+}
+
+impl From<TerminalInputRecord> for codex_protocol::protocol::TerminalInputRecord {
+    fn from(value: TerminalInputRecord) -> Self {
+        match value {
+            TerminalInputRecord::Plaintext { text } => Self::Plaintext { text },
+            TerminalInputRecord::Redacted { len, kind } => Self::Redacted {
+                len,
+                kind: kind.into(),
+            },
+            TerminalInputRecord::EmptyPoll => Self::EmptyPoll,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
 pub struct ThreadRollbackParams {
     pub thread_id: String,
     /// The number of turns to drop from the end of the thread. Must be >= 1.
@@ -5609,7 +5785,36 @@ pub struct TerminalInteractionNotification {
     pub turn_id: String,
     pub item_id: String,
     pub process_id: String,
-    pub stdin: String,
+    pub input: TerminalInputRecord,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct ThreadBackgroundTerminalOutputDeltaNotification {
+    pub thread_id: String,
+    pub process_id: String,
+    #[ts(type = "string")]
+    pub delta_base64: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct ThreadBackgroundTerminalExitedNotification {
+    pub thread_id: String,
+    pub process_id: String,
+    pub exit_code: Option<i32>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct ThreadBackgroundTerminalAttachmentChangedNotification {
+    pub thread_id: String,
+    pub process_id: String,
+    pub attached: bool,
+    pub secure_input_prompt: Option<TerminalInputRedactionKind>,
 }
 
 #[serde_as]

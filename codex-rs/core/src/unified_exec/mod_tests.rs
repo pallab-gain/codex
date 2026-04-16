@@ -117,6 +117,8 @@ async fn exec_command_with_tty(
             tty,
             network_approval_id: None,
             session: Arc::downgrade(session),
+            transcript: Arc::new(tokio::sync::Mutex::new(HeadTailBuffer::default())),
+            attachment_state: AttachmentState::Detached,
             last_used: started_at,
         };
         manager

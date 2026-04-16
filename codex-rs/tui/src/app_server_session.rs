@@ -5,13 +5,16 @@ use crate::legacy_core::config::Config;
 use crate::legacy_core::message_history_metadata;
 use crate::status::StatusAccountDisplay;
 use crate::status::plan_type_display_name;
+use base64::Engine;
 use codex_app_server_client::AppServerClient;
 use codex_app_server_client::AppServerEvent;
 use codex_app_server_client::AppServerRequestHandle;
 use codex_app_server_client::TypedRequestError;
 use codex_app_server_protocol::Account;
 use codex_app_server_protocol::AuthMode;
+use codex_app_server_protocol::BackgroundTerminal;
 use codex_app_server_protocol::ClientRequest;
+use codex_app_server_protocol::CommandExecTerminalSize;
 use codex_app_server_protocol::ConfigBatchWriteParams;
 use codex_app_server_protocol::ConfigWriteResponse;
 use codex_app_server_protocol::GetAccountParams;
@@ -28,9 +31,22 @@ use codex_app_server_protocol::ReviewStartParams;
 use codex_app_server_protocol::ReviewStartResponse;
 use codex_app_server_protocol::SkillsListParams;
 use codex_app_server_protocol::SkillsListResponse;
+use codex_app_server_protocol::TerminalInputRedactionKind;
 use codex_app_server_protocol::Thread;
+use codex_app_server_protocol::ThreadBackgroundTerminalAttachParams;
+use codex_app_server_protocol::ThreadBackgroundTerminalAttachResponse;
+use codex_app_server_protocol::ThreadBackgroundTerminalDetachParams;
+use codex_app_server_protocol::ThreadBackgroundTerminalDetachResponse;
+use codex_app_server_protocol::ThreadBackgroundTerminalResizeParams;
+use codex_app_server_protocol::ThreadBackgroundTerminalResizeResponse;
+use codex_app_server_protocol::ThreadBackgroundTerminalWriteParams;
+use codex_app_server_protocol::ThreadBackgroundTerminalWriteResponse;
+use codex_app_server_protocol::ThreadBackgroundTerminalWriteSecretParams;
+use codex_app_server_protocol::ThreadBackgroundTerminalWriteSecretResponse;
 use codex_app_server_protocol::ThreadBackgroundTerminalsCleanParams;
 use codex_app_server_protocol::ThreadBackgroundTerminalsCleanResponse;
+use codex_app_server_protocol::ThreadBackgroundTerminalsListParams;
+use codex_app_server_protocol::ThreadBackgroundTerminalsListResponse;
 use codex_app_server_protocol::ThreadCompactStartParams;
 use codex_app_server_protocol::ThreadCompactStartResponse;
 use codex_app_server_protocol::ThreadForkParams;
@@ -614,6 +630,131 @@ impl AppServerSession {
             })
             .await
             .wrap_err("thread/backgroundTerminals/clean failed in TUI")?;
+        Ok(())
+    }
+
+    pub(crate) async fn thread_background_terminals_list(
+        &mut self,
+        thread_id: ThreadId,
+    ) -> Result<Vec<BackgroundTerminal>> {
+        let request_id = self.next_request_id();
+        let response: ThreadBackgroundTerminalsListResponse = self
+            .client
+            .request_typed(ClientRequest::ThreadBackgroundTerminalsList {
+                request_id,
+                params: ThreadBackgroundTerminalsListParams {
+                    thread_id: thread_id.to_string(),
+                },
+            })
+            .await
+            .wrap_err("thread/backgroundTerminals/list failed in TUI")?;
+        Ok(response.data)
+    }
+
+    pub(crate) async fn thread_background_terminal_attach(
+        &mut self,
+        thread_id: ThreadId,
+        process_id: String,
+    ) -> Result<ThreadBackgroundTerminalAttachResponse> {
+        let request_id = self.next_request_id();
+        self.client
+            .request_typed(ClientRequest::ThreadBackgroundTerminalAttach {
+                request_id,
+                params: ThreadBackgroundTerminalAttachParams {
+                    thread_id: thread_id.to_string(),
+                    process_id,
+                },
+            })
+            .await
+            .wrap_err("thread/backgroundTerminal/attach failed in TUI")
+    }
+
+    pub(crate) async fn thread_background_terminal_detach(
+        &mut self,
+        thread_id: ThreadId,
+        process_id: String,
+    ) -> Result<()> {
+        let request_id = self.next_request_id();
+        let _: ThreadBackgroundTerminalDetachResponse = self
+            .client
+            .request_typed(ClientRequest::ThreadBackgroundTerminalDetach {
+                request_id,
+                params: ThreadBackgroundTerminalDetachParams {
+                    thread_id: thread_id.to_string(),
+                    process_id,
+                },
+            })
+            .await
+            .wrap_err("thread/backgroundTerminal/detach failed in TUI")?;
+        Ok(())
+    }
+
+    pub(crate) async fn thread_background_terminal_write(
+        &mut self,
+        thread_id: ThreadId,
+        process_id: String,
+        data: String,
+    ) -> Result<()> {
+        let request_id = self.next_request_id();
+        let _: ThreadBackgroundTerminalWriteResponse = self
+            .client
+            .request_typed(ClientRequest::ThreadBackgroundTerminalWrite {
+                request_id,
+                params: ThreadBackgroundTerminalWriteParams {
+                    thread_id: thread_id.to_string(),
+                    process_id,
+                    data_base64: base64::engine::general_purpose::STANDARD.encode(data),
+                },
+            })
+            .await
+            .wrap_err("thread/backgroundTerminal/write failed in TUI")?;
+        Ok(())
+    }
+
+    pub(crate) async fn thread_background_terminal_write_secret(
+        &mut self,
+        thread_id: ThreadId,
+        process_id: String,
+        data: String,
+        kind: TerminalInputRedactionKind,
+    ) -> Result<()> {
+        let request_id = self.next_request_id();
+        let _: ThreadBackgroundTerminalWriteSecretResponse = self
+            .client
+            .request_typed(ClientRequest::ThreadBackgroundTerminalWriteSecret {
+                request_id,
+                params: ThreadBackgroundTerminalWriteSecretParams {
+                    thread_id: thread_id.to_string(),
+                    process_id,
+                    data_base64: base64::engine::general_purpose::STANDARD.encode(data),
+                    kind,
+                },
+            })
+            .await
+            .wrap_err("thread/backgroundTerminal/writeSecret failed in TUI")?;
+        Ok(())
+    }
+
+    pub(crate) async fn thread_background_terminal_resize(
+        &mut self,
+        thread_id: ThreadId,
+        process_id: String,
+        rows: u16,
+        cols: u16,
+    ) -> Result<()> {
+        let request_id = self.next_request_id();
+        let _: ThreadBackgroundTerminalResizeResponse = self
+            .client
+            .request_typed(ClientRequest::ThreadBackgroundTerminalResize {
+                request_id,
+                params: ThreadBackgroundTerminalResizeParams {
+                    thread_id: thread_id.to_string(),
+                    process_id,
+                    size: CommandExecTerminalSize { rows, cols },
+                },
+            })
+            .await
+            .wrap_err("thread/backgroundTerminal/resize failed in TUI")?;
         Ok(())
     }
 

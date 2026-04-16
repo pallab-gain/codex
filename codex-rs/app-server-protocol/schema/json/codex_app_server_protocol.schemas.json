@@ -489,6 +489,150 @@
             },
             "method": {
               "enum": [
+                "thread/backgroundTerminals/list"
+              ],
+              "title": "Thread/backgroundTerminals/listRequestMethod",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/definitions/v2/ThreadBackgroundTerminalsListParams"
+            }
+          },
+          "required": [
+            "id",
+            "method",
+            "params"
+          ],
+          "title": "Thread/backgroundTerminals/listRequest",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "id": {
+              "$ref": "#/definitions/v2/RequestId"
+            },
+            "method": {
+              "enum": [
+                "thread/backgroundTerminal/attach"
+              ],
+              "title": "Thread/backgroundTerminal/attachRequestMethod",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/definitions/v2/ThreadBackgroundTerminalAttachParams"
+            }
+          },
+          "required": [
+            "id",
+            "method",
+            "params"
+          ],
+          "title": "Thread/backgroundTerminal/attachRequest",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "id": {
+              "$ref": "#/definitions/v2/RequestId"
+            },
+            "method": {
+              "enum": [
+                "thread/backgroundTerminal/detach"
+              ],
+              "title": "Thread/backgroundTerminal/detachRequestMethod",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/definitions/v2/ThreadBackgroundTerminalDetachParams"
+            }
+          },
+          "required": [
+            "id",
+            "method",
+            "params"
+          ],
+          "title": "Thread/backgroundTerminal/detachRequest",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "id": {
+              "$ref": "#/definitions/v2/RequestId"
+            },
+            "method": {
+              "enum": [
+                "thread/backgroundTerminal/write"
+              ],
+              "title": "Thread/backgroundTerminal/writeRequestMethod",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/definitions/v2/ThreadBackgroundTerminalWriteParams"
+            }
+          },
+          "required": [
+            "id",
+            "method",
+            "params"
+          ],
+          "title": "Thread/backgroundTerminal/writeRequest",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "id": {
+              "$ref": "#/definitions/v2/RequestId"
+            },
+            "method": {
+              "enum": [
+                "thread/backgroundTerminal/writeSecret"
+              ],
+              "title": "Thread/backgroundTerminal/writeSecretRequestMethod",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/definitions/v2/ThreadBackgroundTerminalWriteSecretParams"
+            }
+          },
+          "required": [
+            "id",
+            "method",
+            "params"
+          ],
+          "title": "Thread/backgroundTerminal/writeSecretRequest",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "id": {
+              "$ref": "#/definitions/v2/RequestId"
+            },
+            "method": {
+              "enum": [
+                "thread/backgroundTerminal/resize"
+              ],
+              "title": "Thread/backgroundTerminal/resizeRequestMethod",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/definitions/v2/ThreadBackgroundTerminalResizeParams"
+            }
+          },
+          "required": [
+            "id",
+            "method",
+            "params"
+          ],
+          "title": "Thread/backgroundTerminal/resizeRequest",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "id": {
+              "$ref": "#/definitions/v2/RequestId"
+            },
+            "method": {
+              "enum": [
                 "thread/rollback"
               ],
               "title": "Thread/rollbackRequestMethod",
@@ -3982,6 +4126,66 @@
           "properties": {
             "method": {
               "enum": [
+                "thread/backgroundTerminal/outputDelta"
+              ],
+              "title": "Thread/backgroundTerminal/outputDeltaNotificationMethod",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/definitions/v2/ThreadBackgroundTerminalOutputDeltaNotification"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "title": "Thread/backgroundTerminal/outputDeltaNotification",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "enum": [
+                "thread/backgroundTerminal/exited"
+              ],
+              "title": "Thread/backgroundTerminal/exitedNotificationMethod",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/definitions/v2/ThreadBackgroundTerminalExitedNotification"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "title": "Thread/backgroundTerminal/exitedNotification",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "enum": [
+                "thread/backgroundTerminal/attachmentChanged"
+              ],
+              "title": "Thread/backgroundTerminal/attachmentChangedNotificationMethod",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/definitions/v2/ThreadBackgroundTerminalAttachmentChangedNotification"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "title": "Thread/backgroundTerminal/attachmentChangedNotification",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "enum": [
                 "item/fileChange/outputDelta"
               ],
               "title": "Item/fileChange/outputDeltaNotificationMethod",
@@ -5646,6 +5850,39 @@
           "agent"
         ],
         "type": "string"
+      },
+      "BackgroundTerminal": {
+        "properties": {
+          "attached": {
+            "type": "boolean"
+          },
+          "command": {
+            "type": "string"
+          },
+          "processId": {
+            "type": "string"
+          },
+          "secureInputPrompt": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/v2/TerminalInputRedactionKind"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "tty": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "attached",
+          "command",
+          "processId",
+          "tty"
+        ],
+        "type": "object"
       },
       "ByteRange": {
         "properties": {
@@ -12588,16 +12825,91 @@
           }
         ]
       },
+      "TerminalInputRecord": {
+        "oneOf": [
+          {
+            "properties": {
+              "text": {
+                "type": "string"
+              },
+              "type": {
+                "enum": [
+                  "plaintext"
+                ],
+                "title": "PlaintextTerminalInputRecordType",
+                "type": "string"
+              }
+            },
+            "required": [
+              "text",
+              "type"
+            ],
+            "title": "PlaintextTerminalInputRecord",
+            "type": "object"
+          },
+          {
+            "properties": {
+              "kind": {
+                "$ref": "#/definitions/v2/TerminalInputRedactionKind"
+              },
+              "len": {
+                "format": "uint",
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              "type": {
+                "enum": [
+                  "redacted"
+                ],
+                "title": "RedactedTerminalInputRecordType",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "len",
+              "type"
+            ],
+            "title": "RedactedTerminalInputRecord",
+            "type": "object"
+          },
+          {
+            "properties": {
+              "type": {
+                "enum": [
+                  "empty_poll"
+                ],
+                "title": "EmptyPollTerminalInputRecordType",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "title": "EmptyPollTerminalInputRecord",
+            "type": "object"
+          }
+        ]
+      },
+      "TerminalInputRedactionKind": {
+        "enum": [
+          "password",
+          "passphrase",
+          "pin",
+          "unknown"
+        ],
+        "type": "string"
+      },
       "TerminalInteractionNotification": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "properties": {
+          "input": {
+            "$ref": "#/definitions/v2/TerminalInputRecord"
+          },
           "itemId": {
             "type": "string"
           },
           "processId": {
-            "type": "string"
-          },
-          "stdin": {
             "type": "string"
           },
           "threadId": {
@@ -12608,9 +12920,9 @@
           }
         },
         "required": [
+          "input",
           "itemId",
           "processId",
-          "stdin",
           "threadId",
           "turnId"
         ],
@@ -12836,6 +13148,249 @@
           "threadId"
         ],
         "title": "ThreadArchivedNotification",
+        "type": "object"
+      },
+      "ThreadBackgroundTerminalAttachParams": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "processId": {
+            "type": "string"
+          },
+          "threadId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "processId",
+          "threadId"
+        ],
+        "title": "ThreadBackgroundTerminalAttachParams",
+        "type": "object"
+      },
+      "ThreadBackgroundTerminalAttachResponse": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "outputBase64": {
+            "type": "string"
+          },
+          "terminal": {
+            "$ref": "#/definitions/v2/BackgroundTerminal"
+          }
+        },
+        "required": [
+          "outputBase64",
+          "terminal"
+        ],
+        "title": "ThreadBackgroundTerminalAttachResponse",
+        "type": "object"
+      },
+      "ThreadBackgroundTerminalAttachmentChangedNotification": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "attached": {
+            "type": "boolean"
+          },
+          "processId": {
+            "type": "string"
+          },
+          "secureInputPrompt": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/v2/TerminalInputRedactionKind"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "threadId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "attached",
+          "processId",
+          "threadId"
+        ],
+        "title": "ThreadBackgroundTerminalAttachmentChangedNotification",
+        "type": "object"
+      },
+      "ThreadBackgroundTerminalDetachParams": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "processId": {
+            "type": "string"
+          },
+          "threadId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "processId",
+          "threadId"
+        ],
+        "title": "ThreadBackgroundTerminalDetachParams",
+        "type": "object"
+      },
+      "ThreadBackgroundTerminalDetachResponse": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "title": "ThreadBackgroundTerminalDetachResponse",
+        "type": "object"
+      },
+      "ThreadBackgroundTerminalExitedNotification": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "exitCode": {
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "processId": {
+            "type": "string"
+          },
+          "threadId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "processId",
+          "threadId"
+        ],
+        "title": "ThreadBackgroundTerminalExitedNotification",
+        "type": "object"
+      },
+      "ThreadBackgroundTerminalOutputDeltaNotification": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "deltaBase64": {
+            "type": "string"
+          },
+          "processId": {
+            "type": "string"
+          },
+          "threadId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "deltaBase64",
+          "processId",
+          "threadId"
+        ],
+        "title": "ThreadBackgroundTerminalOutputDeltaNotification",
+        "type": "object"
+      },
+      "ThreadBackgroundTerminalResizeParams": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "processId": {
+            "type": "string"
+          },
+          "size": {
+            "$ref": "#/definitions/v2/CommandExecTerminalSize"
+          },
+          "threadId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "processId",
+          "size",
+          "threadId"
+        ],
+        "title": "ThreadBackgroundTerminalResizeParams",
+        "type": "object"
+      },
+      "ThreadBackgroundTerminalResizeResponse": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "title": "ThreadBackgroundTerminalResizeResponse",
+        "type": "object"
+      },
+      "ThreadBackgroundTerminalWriteParams": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "dataBase64": {
+            "type": "string"
+          },
+          "processId": {
+            "type": "string"
+          },
+          "threadId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "dataBase64",
+          "processId",
+          "threadId"
+        ],
+        "title": "ThreadBackgroundTerminalWriteParams",
+        "type": "object"
+      },
+      "ThreadBackgroundTerminalWriteResponse": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "title": "ThreadBackgroundTerminalWriteResponse",
+        "type": "object"
+      },
+      "ThreadBackgroundTerminalWriteSecretParams": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "dataBase64": {
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/definitions/v2/TerminalInputRedactionKind"
+          },
+          "processId": {
+            "type": "string"
+          },
+          "threadId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "dataBase64",
+          "kind",
+          "processId",
+          "threadId"
+        ],
+        "title": "ThreadBackgroundTerminalWriteSecretParams",
+        "type": "object"
+      },
+      "ThreadBackgroundTerminalWriteSecretResponse": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "title": "ThreadBackgroundTerminalWriteSecretResponse",
+        "type": "object"
+      },
+      "ThreadBackgroundTerminalsListParams": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "threadId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "threadId"
+        ],
+        "title": "ThreadBackgroundTerminalsListParams",
+        "type": "object"
+      },
+      "ThreadBackgroundTerminalsListResponse": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/definitions/v2/BackgroundTerminal"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "ThreadBackgroundTerminalsListResponse",
         "type": "object"
       },
       "ThreadClosedNotification": {

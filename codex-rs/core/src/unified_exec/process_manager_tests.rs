@@ -1,5 +1,21 @@
 use super::*;
+use crate::sandboxing::ExecRequest;
+use crate::sandboxing::ExecServerEnvConfig;
+use crate::unified_exec::DEFAULT_MAX_BACKGROUND_TERMINAL_TIMEOUT_MS;
+use crate::unified_exec::HeadTailBuffer;
+use crate::unified_exec::NoopSpawnLifecycle;
+use crate::unified_exec::process_manager::apply_unified_exec_env;
+use crate::unified_exec::process_manager::env_overlay_for_exec_server;
+use crate::unified_exec::process_manager::exec_server_params_for_request;
+use crate::unified_exec::process_manager::exec_server_process_id;
+use codex_sandboxing::SandboxType;
+use codex_utils_pty::TerminalSize;
+use codex_utils_pty::spawn_pty_process;
 use pretty_assertions::assert_eq;
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::sync::Weak;
+use tokio::sync::Mutex;
 use tokio::time::Duration;
 use tokio::time::Instant;
 
@@ -187,4 +203,178 @@ fn pruning_protects_recent_processes_even_if_exited() {
 
     // (10) is exited but among the last 8; we should drop the LRU outside that set.
     assert_eq!(candidate, Some(1));
+}
+
+async fn local_terminal_process() -> UnifiedExecProcess {
+    let cwd = std::env::current_dir().expect("current dir");
+    let spawned = spawn_pty_process(
+        "/bin/sh",
+        &["-lc".to_string(), "cat".to_string()],
+        &cwd,
+        &HashMap::new(),
+        &None,
+        TerminalSize { rows: 24, cols: 80 },
+    )
+    .await
+    .expect("spawn local PTY");
+
+    UnifiedExecProcess::from_spawned(spawned, SandboxType::None, Box::new(NoopSpawnLifecycle))
+        .await
+        .expect("wrap spawned PTY")
+}
+
+async fn insert_background_terminal(
+    manager: &UnifiedExecProcessManager,
+    process_id: i32,
+) -> Arc<UnifiedExecProcess> {
+    let process = Arc::new(local_terminal_process().await);
+    let entry = ProcessEntry {
+        process: Arc::clone(&process),
+        call_id: "call".to_string(),
+        process_id,
+        command: vec!["bash".to_string(), "-lc".to_string(), "cat".to_string()],
+        tty: true,
+        network_approval_id: None,
+        session: Weak::new(),
+        transcript: Arc::new(Mutex::new(HeadTailBuffer::default())),
+        attachment_state: AttachmentState::Detached,
+        last_used: Instant::now(),
+    };
+    manager
+        .process_store
+        .lock()
+        .await
+        .processes
+        .insert(process_id, entry);
+    process
+}
+
+#[tokio::test]
+async fn attach_blocks_model_writes_and_allows_user_writes() {
+    let manager = UnifiedExecProcessManager::new(DEFAULT_MAX_BACKGROUND_TERMINAL_TIMEOUT_MS);
+    let process_id = 1000;
+    let _process = insert_background_terminal(&manager, process_id).await;
+
+    let attach = manager
+        .attach_process(process_id, "conn-1".to_string())
+        .await
+        .expect("attach succeeds");
+    assert_eq!(
+        attach.summary.attachment_state,
+        AttachmentState::UserAttached {
+            owner_id: "conn-1".to_string(),
+        }
+    );
+
+    let err = manager
+        .write_stdin(WriteStdinRequest {
+            process_id,
+            input: "hello\n",
+            yield_time_ms: 1_000,
+            max_output_tokens: None,
+        })
+        .await
+        .expect_err("model writes should be blocked while attached");
+    assert!(matches!(
+        err,
+        UnifiedExecError::ProcessAttachedByUser {
+            process_id: blocked_process_id,
+        } if blocked_process_id == process_id
+    ));
+
+    let output = manager
+        .write_user_stdin(
+            "conn-1",
+            WriteStdinRequest {
+                process_id,
+                input: "hello\n",
+                yield_time_ms: 1_000,
+                max_output_tokens: None,
+            },
+        )
+        .await
+        .expect("attached user writes succeed");
+    assert_eq!(output.process_id, Some(process_id));
+    assert!(String::from_utf8_lossy(&output.raw_output).contains("hello"));
+}
+
+#[tokio::test]
+async fn detach_restores_model_writes_and_process_stays_alive() {
+    let manager = UnifiedExecProcessManager::new(DEFAULT_MAX_BACKGROUND_TERMINAL_TIMEOUT_MS);
+    let process_id = 1001;
+    let _process = insert_background_terminal(&manager, process_id).await;
+
+    manager
+        .attach_process(process_id, "conn-1".to_string())
+        .await
+        .expect("attach succeeds");
+    manager
+        .detach_process(process_id, "conn-1")
+        .await
+        .expect("detach succeeds");
+
+    let summaries = manager.list_background_terminals().await;
+    assert_eq!(summaries.len(), 1);
+    assert_eq!(summaries[0].process_id, process_id);
+    assert_eq!(summaries[0].attachment_state, AttachmentState::Detached);
+
+    let output = manager
+        .write_stdin(WriteStdinRequest {
+            process_id,
+            input: "after-detach\n",
+            yield_time_ms: 1_000,
+            max_output_tokens: None,
+        })
+        .await
+        .expect("model writes work again after detach");
+    assert!(String::from_utf8_lossy(&output.raw_output).contains("after-detach"));
+}
+
+#[tokio::test]
+async fn resize_and_secure_prompt_state_work_while_attached() {
+    let manager = UnifiedExecProcessManager::new(DEFAULT_MAX_BACKGROUND_TERMINAL_TIMEOUT_MS);
+    let process_id = 1002;
+    let _process = insert_background_terminal(&manager, process_id).await;
+
+    manager
+        .attach_process(process_id, "conn-1".to_string())
+        .await
+        .expect("attach succeeds");
+    manager
+        .resize_process(
+            process_id,
+            "conn-1",
+            TerminalSize {
+                rows: 30,
+                cols: 100,
+            },
+        )
+        .await
+        .expect("attached PTY resize succeeds");
+    manager
+        .set_secure_input_pending(process_id, "conn-1", TerminalInputRedactionKind::Password)
+        .await
+        .expect("secure prompt state set");
+
+    let summaries = manager.list_background_terminals().await;
+    assert_eq!(summaries.len(), 1);
+    assert_eq!(
+        summaries[0].attachment_state,
+        AttachmentState::SecureInputPending {
+            owner_id: "conn-1".to_string(),
+            kind: TerminalInputRedactionKind::Password,
+        }
+    );
+
+    manager
+        .clear_secure_input_pending(process_id, "conn-1")
+        .await
+        .expect("secure prompt state cleared");
+    let summaries = manager.list_background_terminals().await;
+    assert_eq!(
+        summaries[0].attachment_state,
+        AttachmentState::UserAttached {
+            owner_id: "conn-1".to_string(),
+        }
+    );
 }

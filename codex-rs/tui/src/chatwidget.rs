@@ -45,10 +45,12 @@ use std::time::Instant;
 use self::realtime::PendingSteerCompareKey;
 use crate::app_command::AppCommand;
 use crate::app_event::RealtimeAudioDeviceKind;
+use crate::app_event::SensitiveTerminalInput;
 use crate::app_server_approval_conversions::network_approval_context_to_core;
 use crate::app_server_session::ThreadSessionState;
 #[cfg(not(target_os = "linux"))]
 use crate::audio_device::list_realtime_audio_device_names;
+use crate::bottom_pane::BackgroundTerminalSecureInputView;
 use crate::bottom_pane::StatusLineItem;
 use crate::bottom_pane::StatusLinePreviewData;
 use crate::bottom_pane::StatusLineSetupView;
@@ -78,7 +80,9 @@ use crate::terminal_title::clear_terminal_title;
 use crate::terminal_title::set_terminal_title;
 use crate::text_formatting::proper_join;
 use crate::version::CODEX_CLI_VERSION;
+use base64::Engine;
 use codex_app_server_protocol::AppSummary;
+use codex_app_server_protocol::BackgroundTerminal;
 use codex_app_server_protocol::CodexErrorInfo as AppServerCodexErrorInfo;
 use codex_app_server_protocol::CollabAgentState as AppServerCollabAgentState;
 use codex_app_server_protocol::CollabAgentStatus as AppServerCollabAgentStatus;
@@ -95,6 +99,7 @@ use codex_app_server_protocol::McpServerStartupState;
 use codex_app_server_protocol::McpServerStatusUpdatedNotification;
 use codex_app_server_protocol::ServerNotification;
 use codex_app_server_protocol::ServerRequest;
+use codex_app_server_protocol::TerminalInputRedactionKind;
 use codex_app_server_protocol::ThreadItem;
 use codex_app_server_protocol::ThreadTokenUsage;
 use codex_app_server_protocol::ToolRequestUserInputParams;
@@ -195,6 +200,7 @@ use codex_protocol::protocol::ReviewTarget;
 use codex_protocol::protocol::SkillMetadata as ProtocolSkillMetadata;
 #[cfg(test)]
 use codex_protocol::protocol::StreamErrorEvent;
+use codex_protocol::protocol::TerminalInputRecord;
 use codex_protocol::protocol::TerminalInteractionEvent;
 use codex_protocol::protocol::TokenUsage;
 use codex_protocol::protocol::TokenUsageInfo;
@@ -357,7 +363,11 @@ use crate::status_indicator_widget::STATUS_DETAILS_DEFAULT_MAX_LINES;
 use crate::status_indicator_widget::StatusDetailsCapitalization;
 use crate::text_formatting::truncate_text;
 use crate::tui::FrameRequester;
+mod attached_terminal;
 mod interrupts;
+use self::attached_terminal::ATTACHED_TERMINAL_DETACH_KEY;
+use self::attached_terminal::ATTACHED_TERMINAL_SECURE_INPUT_KEY;
+use self::attached_terminal::AttachedTerminal;
 use self::interrupts::InterruptManager;
 mod session_header;
 use self::session_header::SessionHeader;
@@ -810,6 +820,7 @@ pub(crate) struct ChatWidget {
     turn_sleep_inhibitor: SleepInhibitor,
     task_complete_pending: bool,
     unified_exec_processes: Vec<UnifiedExecProcessSummary>,
+    attached_terminal: Option<AttachedTerminal>,
     /// Tracks whether codex-core currently considers an agent turn to be in progress.
     ///
     /// This is kept separate from `mcp_startup_status` so that MCP startup progress (or completion)
@@ -1711,7 +1722,10 @@ impl ChatWidget {
             return;
         };
         self.needs_final_message_separator = true;
-        let cell = history_cell::new_unified_exec_interaction(wait.command_display, String::new());
+        let cell = history_cell::new_unified_exec_interaction(
+            wait.command_display,
+            TerminalInputRecord::EmptyPoll,
+        );
         self.app_event_tx
             .send(AppEvent::InsertHistoryCell(Box::new(cell)));
         self.restore_reasoning_status_header();
@@ -3609,7 +3623,7 @@ impl ChatWidget {
     }
 
     fn on_terminal_interaction(&mut self, ev: TerminalInteractionEvent) {
-        if !self.bottom_pane.is_task_running() {
+        if !self.bottom_pane.is_task_running() && self.attached_terminal.is_none() {
             return;
         }
         self.flush_answer_stream_with_separator();
@@ -3618,7 +3632,7 @@ impl ChatWidget {
             .iter()
             .find(|process| process.key == ev.process_id)
             .map(|process| process.command_display.clone());
-        if ev.stdin.is_empty() {
+        if ev.input.is_empty_poll() {
             // Empty stdin means we are polling for background output.
             // Surface this in the status indicator (single "waiting" surface) instead of
             // the transcript. Keep the header short so the interrupt hint remains visible.
@@ -3657,9 +3671,219 @@ impl ChatWidget {
             }
             self.add_to_history(history_cell::new_unified_exec_interaction(
                 command_display,
-                ev.stdin,
+                ev.input,
             ));
         }
+    }
+
+    pub(crate) fn on_background_terminal_list_loaded(
+        &mut self,
+        thread_id: ThreadId,
+        terminals: Vec<BackgroundTerminal>,
+        open_picker: bool,
+    ) {
+        if open_picker {
+            self.open_background_terminal_picker(thread_id, terminals);
+            return;
+        }
+
+        let processes = terminals
+            .into_iter()
+            .map(|terminal| history_cell::UnifiedExecProcessDetails {
+                command_display: background_terminal_summary_text(&terminal),
+                recent_chunks: Vec::new(),
+            })
+            .collect();
+        self.add_to_history(history_cell::new_unified_exec_processes_output(processes));
+        self.request_redraw();
+    }
+
+    fn open_background_terminal_picker(
+        &mut self,
+        thread_id: ThreadId,
+        terminals: Vec<BackgroundTerminal>,
+    ) {
+        if terminals.is_empty() {
+            self.add_info_message("No background terminals running.".to_string(), None);
+            return;
+        }
+
+        let items = terminals
+            .into_iter()
+            .map(|terminal| {
+                let process_id = terminal.process_id.clone();
+                let description = background_terminal_summary_text(&terminal);
+                SelectionItem {
+                    name: format!("#{}", terminal.process_id),
+                    description: Some(description),
+                    actions: vec![Box::new(move |tx| {
+                        tx.send(AppEvent::AttachBackgroundTerminal {
+                            thread_id,
+                            process_id: process_id.clone(),
+                        });
+                    })],
+                    dismiss_on_select: true,
+                    ..Default::default()
+                }
+            })
+            .collect();
+        self.bottom_pane.show_selection_view(SelectionViewParams {
+            title: Some("Attach To Terminal".to_string()),
+            subtitle: Some("Select a running background terminal.".to_string()),
+            items,
+            ..Default::default()
+        });
+        self.request_redraw();
+    }
+
+    pub(crate) fn attach_background_terminal(
+        &mut self,
+        terminal: BackgroundTerminal,
+        initial_output: &[u8],
+    ) {
+        let cols = self
+            .last_rendered_width
+            .get()
+            .and_then(|width| u16::try_from(width).ok())
+            .unwrap_or(80);
+        let mut attached_terminal = AttachedTerminal::new(terminal, initial_output, 24, cols);
+        if let Some(kind) = attached_terminal.take_secure_input_prompt_to_open() {
+            self.open_secure_input_prompt(attached_terminal.process_id.clone(), kind);
+        }
+        self.attached_terminal = Some(attached_terminal);
+        self.request_redraw();
+    }
+
+    pub(crate) fn detach_background_terminal_local(
+        &mut self,
+        process_id: &str,
+        exited: Option<Option<i32>>,
+    ) {
+        let Some(attached_terminal) = self.attached_terminal.as_ref() else {
+            return;
+        };
+        if attached_terminal.process_id != process_id {
+            return;
+        }
+
+        self.attached_terminal = None;
+        match exited {
+            Some(Some(exit_code)) => {
+                self.add_info_message(
+                    format!("Background terminal {process_id} exited with status {exit_code}."),
+                    None,
+                );
+            }
+            Some(None) => {
+                self.add_info_message(format!("Background terminal {process_id} exited."), None);
+            }
+            None => {}
+        }
+        self.request_redraw();
+    }
+
+    fn on_background_terminal_output_delta(&mut self, process_id: &str, delta_base64: &str) {
+        let Some(attached_terminal) = self.attached_terminal.as_mut() else {
+            return;
+        };
+        if attached_terminal.process_id != process_id {
+            return;
+        }
+
+        let delta = match base64::engine::general_purpose::STANDARD.decode(delta_base64) {
+            Ok(delta) => delta,
+            Err(err) => {
+                self.add_error_message(format!(
+                    "Failed to decode background terminal output: {err}"
+                ));
+                return;
+            }
+        };
+        attached_terminal.apply_output(&delta);
+        self.maybe_open_secure_input_prompt();
+        self.request_redraw();
+    }
+
+    fn on_background_terminal_exited(&mut self, process_id: &str, exit_code: Option<i32>) {
+        self.detach_background_terminal_local(process_id, Some(exit_code));
+    }
+
+    fn on_background_terminal_attachment_changed(
+        &mut self,
+        process_id: &str,
+        attached: bool,
+        secure_input_prompt: Option<TerminalInputRedactionKind>,
+    ) {
+        let Some(attached_terminal) = self.attached_terminal.as_mut() else {
+            return;
+        };
+        if attached_terminal.process_id != process_id {
+            return;
+        }
+        if !attached {
+            self.detach_background_terminal_local(process_id, None);
+            return;
+        }
+
+        attached_terminal.set_secure_input_prompt(secure_input_prompt);
+        self.maybe_open_secure_input_prompt();
+        self.request_redraw();
+    }
+
+    fn maybe_open_secure_input_prompt(&mut self) {
+        if !self.bottom_pane.no_modal_or_popup_active() {
+            return;
+        }
+        let Some((process_id, kind)) = self.attached_terminal.as_mut().and_then(|terminal| {
+            terminal
+                .take_secure_input_prompt_to_open()
+                .map(|kind| (terminal.process_id.clone(), kind))
+        }) else {
+            return;
+        };
+        self.open_secure_input_prompt(process_id, kind);
+    }
+
+    fn open_secure_input_prompt(&mut self, process_id: String, kind: TerminalInputRedactionKind) {
+        let Some(thread_id) = self.thread_id else {
+            return;
+        };
+        let tx = self.app_event_tx.clone();
+        let title = format!("Secure {}", secure_input_prompt_label(kind));
+        let subtitle =
+            "Input is sent to the terminal and is not stored in history or logs.".to_string();
+        self.bottom_pane
+            .show_view(Box::new(BackgroundTerminalSecureInputView::new(
+                title,
+                subtitle,
+                Box::new(move |value| {
+                    tx.send(AppEvent::WriteBackgroundTerminalSecureInput {
+                        thread_id,
+                        process_id: process_id.clone(),
+                        data: SensitiveTerminalInput(value),
+                        kind,
+                    });
+                }),
+            )));
+        self.request_redraw();
+    }
+
+    pub(crate) fn attached_terminal_resize_request(
+        &mut self,
+        total_width: u16,
+        total_height: u16,
+    ) -> Option<(String, u16, u16)> {
+        let attached_terminal = self.attached_terminal.as_mut()?;
+        let bottom_pane_height = if self.bottom_pane.no_modal_or_popup_active() {
+            0
+        } else {
+            self.bottom_pane
+                .desired_height(total_width)
+                .saturating_add(1)
+        };
+        let rows = total_height.saturating_sub(bottom_pane_height);
+        let (rows, cols) = attached_terminal.viewport_size_changed(rows, total_width)?;
+        Some((attached_terminal.process_id.clone(), rows, cols))
     }
 
     fn on_patch_apply_begin(&mut self, event: PatchApplyBeginEvent) {
@@ -4879,6 +5103,7 @@ impl ChatWidget {
             turn_sleep_inhibitor: SleepInhibitor::new(prevent_idle_sleep),
             task_complete_pending: false,
             unified_exec_processes: Vec::new(),
+            attached_terminal: None,
             agent_turn_running: false,
             mcp_startup_status: None,
             last_agent_markdown: None,
@@ -4992,6 +5217,51 @@ impl ChatWidget {
     }
 
     pub(crate) fn handle_key_event(&mut self, key_event: KeyEvent) {
+        if self.attached_terminal.is_some() && self.bottom_pane.no_modal_or_popup_active() {
+            if key_event.kind == KeyEventKind::Release {
+                return;
+            }
+
+            let process_id = self
+                .attached_terminal
+                .as_ref()
+                .map(|terminal| terminal.process_id.clone());
+            let Some(process_id) = process_id else {
+                return;
+            };
+            let Some(thread_id) = self.thread_id else {
+                return;
+            };
+
+            if ATTACHED_TERMINAL_DETACH_KEY.is_press(key_event) {
+                self.app_event_tx.send(AppEvent::DetachBackgroundTerminal {
+                    thread_id,
+                    process_id,
+                });
+                return;
+            }
+
+            if ATTACHED_TERMINAL_SECURE_INPUT_KEY.is_press(key_event) {
+                let kind = self
+                    .attached_terminal
+                    .as_ref()
+                    .and_then(AttachedTerminal::secure_input_prompt)
+                    .unwrap_or(TerminalInputRedactionKind::Unknown);
+                self.open_secure_input_prompt(process_id, kind);
+                return;
+            }
+
+            if let Some(data) = AttachedTerminal::encode_key_event(key_event) {
+                self.app_event_tx
+                    .send(AppEvent::WriteBackgroundTerminalInput {
+                        thread_id,
+                        process_id,
+                        data,
+                    });
+            }
+            return;
+        }
+
         match key_event {
             // Ctrl+O - copy last agent response from the main view.
             KeyEvent {
@@ -5295,6 +5565,22 @@ impl ChatWidget {
     }
 
     pub(crate) fn handle_paste(&mut self, text: String) {
+        if self.attached_terminal.is_some() && self.bottom_pane.no_modal_or_popup_active() {
+            if let (Some(thread_id), Some(process_id)) = (
+                self.thread_id,
+                self.attached_terminal
+                    .as_ref()
+                    .map(|terminal| terminal.process_id.clone()),
+            ) {
+                self.app_event_tx
+                    .send(AppEvent::WriteBackgroundTerminalInput {
+                        thread_id,
+                        process_id,
+                        data: text,
+                    });
+            }
+            return;
+        }
         self.bottom_pane.handle_paste(text);
     }
 
@@ -6145,8 +6431,27 @@ impl ChatWidget {
                 self.on_terminal_interaction(TerminalInteractionEvent {
                     call_id: notification.item_id,
                     process_id: notification.process_id,
-                    stdin: notification.stdin,
+                    input: notification.input.into(),
                 })
+            }
+            ServerNotification::ThreadBackgroundTerminalOutputDelta(notification) => {
+                self.on_background_terminal_output_delta(
+                    &notification.process_id,
+                    &notification.delta_base64,
+                );
+            }
+            ServerNotification::ThreadBackgroundTerminalExited(notification) => {
+                self.on_background_terminal_exited(
+                    &notification.process_id,
+                    notification.exit_code,
+                );
+            }
+            ServerNotification::ThreadBackgroundTerminalAttachmentChanged(notification) => {
+                self.on_background_terminal_attachment_changed(
+                    &notification.process_id,
+                    notification.attached,
+                    notification.secure_input_prompt,
+                );
             }
             ServerNotification::CommandExecutionOutputDelta(notification) => {
                 self.on_exec_command_output_delta(ExecCommandOutputDeltaEvent {
@@ -10685,6 +10990,22 @@ impl ChatWidget {
     }
 
     fn as_renderable(&self) -> RenderableItem<'_> {
+        if let Some(attached_terminal) = self.attached_terminal.as_ref() {
+            if self.bottom_pane.no_modal_or_popup_active() {
+                return RenderableItem::Borrowed(attached_terminal);
+            }
+
+            let mut flex = FlexRenderable::new();
+            flex.push(/*flex*/ 1, RenderableItem::Borrowed(attached_terminal));
+            flex.push(
+                /*flex*/ 0,
+                RenderableItem::Borrowed(&self.bottom_pane).inset(Insets::tlbr(
+                    /*top*/ 1, /*left*/ 0, /*bottom*/ 0, /*right*/ 0,
+                )),
+            );
+            return RenderableItem::Owned(Box::new(flex));
+        }
+
         let active_cell_renderable = match &self.active_cell {
             Some(cell) => RenderableItem::Borrowed(cell).inset(Insets::tlbr(
                 /*top*/ 1, /*left*/ 0, /*bottom*/ 0, /*right*/ 0,
@@ -10757,6 +11078,27 @@ impl Renderable for ChatWidget {
 
     fn cursor_pos(&self, area: Rect) -> Option<(u16, u16)> {
         self.as_renderable().cursor_pos(area)
+    }
+}
+
+fn background_terminal_summary_text(terminal: &BackgroundTerminal) -> String {
+    let mut parts = vec![format!("#{}", terminal.process_id)];
+    if terminal.attached {
+        parts.push("attached".to_string());
+    }
+    if let Some(kind) = terminal.secure_input_prompt {
+        parts.push(format!("{} prompt", secure_input_prompt_label(kind)));
+    }
+    parts.push(terminal.command.clone());
+    parts.join(" · ")
+}
+
+fn secure_input_prompt_label(kind: TerminalInputRedactionKind) -> &'static str {
+    match kind {
+        TerminalInputRedactionKind::Password => "password",
+        TerminalInputRedactionKind::Passphrase => "passphrase",
+        TerminalInputRedactionKind::Pin => "PIN",
+        TerminalInputRedactionKind::Unknown => "secret",
     }
 }
 

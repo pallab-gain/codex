@@ -300,7 +300,24 @@ impl ChatWidget {
                 self.open_theme_picker();
             }
             SlashCommand::Ps => {
-                self.add_ps_output();
+                if let Some(thread_id) = self.thread_id {
+                    self.app_event_tx.send(AppEvent::ListBackgroundTerminals {
+                        thread_id,
+                        open_picker: false,
+                    });
+                } else {
+                    self.add_ps_output();
+                }
+            }
+            SlashCommand::Attach => {
+                if let Some(thread_id) = self.thread_id {
+                    self.app_event_tx.send(AppEvent::ListBackgroundTerminals {
+                        thread_id,
+                        open_picker: true,
+                    });
+                } else {
+                    self.add_error_message("No active thread for /attach.".to_string());
+                }
             }
             SlashCommand::Stop => {
                 self.clean_background_terminals();
@@ -501,6 +518,23 @@ impl ChatWidget {
                 };
                 self.app_event_tx
                     .send(AppEvent::ResumeSessionByIdOrName(prepared_args));
+                self.bottom_pane.drain_pending_submission_state();
+            }
+            SlashCommand::Attach if !trimmed.is_empty() => {
+                let Some(thread_id) = self.thread_id else {
+                    self.add_error_message("No active thread for /attach.".to_string());
+                    return;
+                };
+                let Some((prepared_args, _prepared_elements)) = self
+                    .bottom_pane
+                    .prepare_inline_args_submission(/*record_history*/ false)
+                else {
+                    return;
+                };
+                self.app_event_tx.send(AppEvent::AttachBackgroundTerminal {
+                    thread_id,
+                    process_id: prepared_args.trim().to_string(),
+                });
                 self.bottom_pane.drain_pending_submission_state();
             }
             SlashCommand::SandboxReadRoot if !trimmed.is_empty() => {

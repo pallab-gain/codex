@@ -3,6 +3,11 @@ use crate::codex::Codex;
 use crate::codex::SteerInputError;
 use crate::config::ConstraintResult;
 use crate::file_watcher::WatchRegistration;
+use crate::tools::context::ExecCommandToolOutput;
+use crate::unified_exec::BackgroundTerminalAttach;
+use crate::unified_exec::BackgroundTerminalSummary;
+use crate::unified_exec::UnifiedExecError;
+use crate::unified_exec::WriteStdinRequest;
 use codex_features::Feature;
 use codex_protocol::config_types::ApprovalsReviewer;
 use codex_protocol::config_types::Personality;
@@ -20,11 +25,13 @@ use codex_protocol::protocol::Op;
 use codex_protocol::protocol::SandboxPolicy;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::Submission;
+use codex_protocol::protocol::TerminalInputRedactionKind;
 use codex_protocol::protocol::ThreadMemoryMode;
 use codex_protocol::protocol::TokenUsage;
 use codex_protocol::protocol::W3cTraceContext;
 use codex_protocol::user_input::UserInput;
 use codex_utils_absolute_path::AbsolutePathBuf;
+use codex_utils_pty::TerminalSize;
 use rmcp::model::ReadResourceRequestParams;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -229,6 +236,128 @@ impl CodexThread {
 
     pub fn state_db(&self) -> Option<StateDbHandle> {
         self.codex.state_db()
+    }
+
+    pub async fn list_background_terminals(&self) -> Vec<BackgroundTerminalSummary> {
+        self.codex
+            .session
+            .services
+            .unified_exec_manager
+            .list_background_terminals()
+            .await
+    }
+
+    pub async fn attach_background_terminal(
+        &self,
+        process_id: i32,
+        owner_id: String,
+    ) -> Result<BackgroundTerminalAttach, UnifiedExecError> {
+        self.codex
+            .session
+            .services
+            .unified_exec_manager
+            .attach_process(process_id, owner_id)
+            .await
+    }
+
+    pub async fn detach_background_terminal(
+        &self,
+        process_id: i32,
+        owner_id: &str,
+    ) -> Result<(), UnifiedExecError> {
+        self.codex
+            .session
+            .services
+            .unified_exec_manager
+            .detach_process(process_id, owner_id)
+            .await
+    }
+
+    pub async fn write_background_terminal_input(
+        &self,
+        process_id: i32,
+        owner_id: &str,
+        input: &str,
+        yield_time_ms: u64,
+    ) -> Result<ExecCommandToolOutput, UnifiedExecError> {
+        self.codex
+            .session
+            .services
+            .unified_exec_manager
+            .write_user_stdin(
+                owner_id,
+                WriteStdinRequest {
+                    process_id,
+                    input,
+                    yield_time_ms,
+                    max_output_tokens: None,
+                },
+            )
+            .await
+    }
+
+    pub async fn write_background_terminal_secret_input(
+        &self,
+        process_id: i32,
+        owner_id: &str,
+        input: &str,
+        yield_time_ms: u64,
+    ) -> Result<ExecCommandToolOutput, UnifiedExecError> {
+        self.codex
+            .session
+            .services
+            .unified_exec_manager
+            .write_user_stdin(
+                owner_id,
+                WriteStdinRequest {
+                    process_id,
+                    input,
+                    yield_time_ms,
+                    max_output_tokens: None,
+                },
+            )
+            .await
+    }
+
+    pub async fn resize_background_terminal(
+        &self,
+        process_id: i32,
+        owner_id: &str,
+        size: TerminalSize,
+    ) -> Result<(), UnifiedExecError> {
+        self.codex
+            .session
+            .services
+            .unified_exec_manager
+            .resize_process(process_id, owner_id, size)
+            .await
+    }
+
+    pub async fn set_background_terminal_secure_input_pending(
+        &self,
+        process_id: i32,
+        owner_id: &str,
+        kind: TerminalInputRedactionKind,
+    ) -> Result<(), UnifiedExecError> {
+        self.codex
+            .session
+            .services
+            .unified_exec_manager
+            .set_secure_input_pending(process_id, owner_id, kind)
+            .await
+    }
+
+    pub async fn clear_background_terminal_secure_input_pending(
+        &self,
+        process_id: i32,
+        owner_id: &str,
+    ) -> Result<(), UnifiedExecError> {
+        self.codex
+            .session
+            .services
+            .unified_exec_manager
+            .clear_secure_input_pending(process_id, owner_id)
+            .await
     }
 
     pub async fn config_snapshot(&self) -> ThreadConfigSnapshot {

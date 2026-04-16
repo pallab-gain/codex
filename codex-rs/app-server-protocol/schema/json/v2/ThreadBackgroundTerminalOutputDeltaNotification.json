@@ -1,0 +1,21 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "properties": {
+    "deltaBase64": {
+      "type": "string"
+    },
+    "processId": {
+      "type": "string"
+    },
+    "threadId": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "deltaBase64",
+    "processId",
+    "threadId"
+  ],
+  "title": "ThreadBackgroundTerminalOutputDeltaNotification",
+  "type": "object"
+}

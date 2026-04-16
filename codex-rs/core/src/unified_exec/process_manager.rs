@@ -26,6 +26,9 @@ use crate::tools::orchestrator::ToolOrchestrator;
 use crate::tools::runtimes::unified_exec::UnifiedExecRequest as UnifiedExecToolRequest;
 use crate::tools::runtimes::unified_exec::UnifiedExecRuntime;
 use crate::tools::sandboxing::ToolCtx;
+use crate::unified_exec::AttachmentState;
+use crate::unified_exec::BackgroundTerminalAttach;
+use crate::unified_exec::BackgroundTerminalSummary;
 use crate::unified_exec::ExecCommandRequest;
 use crate::unified_exec::MAX_UNIFIED_EXEC_PROCESSES;
 use crate::unified_exec::MAX_YIELD_TIME_MS;
@@ -51,8 +54,10 @@ use crate::unified_exec::process::SpawnLifecycleHandle;
 use crate::unified_exec::process::UnifiedExecProcess;
 use codex_config::types::ShellEnvironmentPolicy;
 use codex_protocol::protocol::ExecCommandSource;
+use codex_protocol::protocol::TerminalInputRedactionKind;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_output_truncation::approx_token_count;
+use codex_utils_pty::TerminalSize;
 
 const UNIFIED_EXEC_ENV: [(&str, &str); 10] = [
     ("NO_COLOR", "1"),
@@ -73,6 +78,15 @@ const UNIFIED_EXEC_ENV: [(&str, &str); 10] = [
 /// must not be toggled.
 static FORCE_DETERMINISTIC_PROCESS_IDS: AtomicBool = AtomicBool::new(false);
 
+type BackgroundTerminalListEntry = (
+    i32,
+    String,
+    Vec<String>,
+    bool,
+    AttachmentState,
+    Arc<tokio::sync::Mutex<HeadTailBuffer>>,
+);
+
 pub(super) fn set_deterministic_process_ids_for_tests(enabled: bool) {
     FORCE_DETERMINISTIC_PROCESS_IDS.store(enabled, Ordering::Relaxed);
 }
@@ -85,7 +99,7 @@ fn should_use_deterministic_process_ids() -> bool {
     cfg!(test) || deterministic_process_ids_forced_for_tests()
 }
 
-fn apply_unified_exec_env(mut env: HashMap<String, String>) -> HashMap<String, String> {
+pub(super) fn apply_unified_exec_env(mut env: HashMap<String, String>) -> HashMap<String, String> {
     for (key, value) in UNIFIED_EXEC_ENV {
         env.insert(key.to_string(), value.to_string());
     }
@@ -112,7 +126,7 @@ fn exec_env_policy_from_shell_policy(
     }
 }
 
-fn env_overlay_for_exec_server(
+pub(super) fn env_overlay_for_exec_server(
     request_env: &HashMap<String, String>,
     local_policy_env: &HashMap<String, String>,
 ) -> HashMap<String, String> {
@@ -139,7 +153,7 @@ fn exec_server_env_for_request(
     }
 }
 
-fn exec_server_params_for_request(
+pub(super) fn exec_server_params_for_request(
     process_id: i32,
     request: &ExecRequest,
     tty: bool,
@@ -168,9 +182,15 @@ struct PreparedProcessHandles {
     command: Vec<String>,
     process_id: i32,
     tty: bool,
+    attachment_state: AttachmentState,
 }
 
-fn exec_server_process_id(process_id: i32) -> String {
+enum TerminalWriter<'a> {
+    Model,
+    User { owner_id: &'a str },
+}
+
+pub(super) fn exec_server_process_id(process_id: i32) -> String {
     process_id.to_string()
 }
 
@@ -222,6 +242,151 @@ impl UnifiedExecProcessManager {
                 .unregister_call(network_approval_id)
                 .await;
         }
+    }
+
+    pub async fn list_background_terminals(&self) -> Vec<BackgroundTerminalSummary> {
+        let entries: Vec<BackgroundTerminalListEntry> = {
+            let store = self.process_store.lock().await;
+            store
+                .processes
+                .values()
+                .filter(|entry| !entry.process.has_exited())
+                .map(|entry| {
+                    (
+                        entry.process_id,
+                        entry.call_id.clone(),
+                        entry.command.clone(),
+                        entry.tty,
+                        entry.attachment_state.clone(),
+                        Arc::clone(&entry.transcript),
+                    )
+                })
+                .collect()
+        };
+
+        let mut summaries = Vec::with_capacity(entries.len());
+        for (process_id, call_id, command, tty, attachment_state, transcript) in entries {
+            let recent_output = transcript.lock().await.to_bytes();
+            summaries.push(BackgroundTerminalSummary {
+                process_id,
+                call_id,
+                command,
+                tty,
+                attachment_state,
+                recent_output,
+            });
+        }
+        summaries.sort_by_key(|summary| summary.process_id);
+        summaries
+    }
+
+    pub async fn attach_process(
+        &self,
+        process_id: i32,
+        owner_id: String,
+    ) -> Result<BackgroundTerminalAttach, UnifiedExecError> {
+        let (call_id, command, tty, transcript, attachment_state, output_rx, exit_token) = {
+            let mut store = self.process_store.lock().await;
+            let entry = store
+                .processes
+                .get_mut(&process_id)
+                .ok_or(UnifiedExecError::UnknownProcessId { process_id })?;
+            if entry.process.has_exited() {
+                return Err(UnifiedExecError::UnknownProcessId { process_id });
+            }
+            entry.attachment_state = AttachmentState::UserAttached {
+                owner_id: owner_id.clone(),
+            };
+            (
+                entry.call_id.clone(),
+                entry.command.clone(),
+                entry.tty,
+                Arc::clone(&entry.transcript),
+                entry.attachment_state.clone(),
+                entry.process.output_receiver(),
+                entry.process.cancellation_token(),
+            )
+        };
+
+        let recent_output = transcript.lock().await.to_bytes();
+        Ok(BackgroundTerminalAttach {
+            summary: BackgroundTerminalSummary {
+                process_id,
+                call_id,
+                command,
+                tty,
+                attachment_state,
+                recent_output,
+            },
+            output_rx,
+            exit_token,
+        })
+    }
+
+    pub async fn detach_process(
+        &self,
+        process_id: i32,
+        owner_id: &str,
+    ) -> Result<(), UnifiedExecError> {
+        let mut store = self.process_store.lock().await;
+        let entry = store
+            .processes
+            .get_mut(&process_id)
+            .ok_or(UnifiedExecError::UnknownProcessId { process_id })?;
+        if !entry.attachment_state.is_attached_by(owner_id) {
+            return Err(UnifiedExecError::ProcessNotAttachedByOwner {
+                process_id,
+                owner_id: owner_id.to_string(),
+            });
+        }
+        entry.attachment_state = AttachmentState::Detached;
+        Ok(())
+    }
+
+    pub async fn set_secure_input_pending(
+        &self,
+        process_id: i32,
+        owner_id: &str,
+        kind: TerminalInputRedactionKind,
+    ) -> Result<(), UnifiedExecError> {
+        let mut store = self.process_store.lock().await;
+        let entry = store
+            .processes
+            .get_mut(&process_id)
+            .ok_or(UnifiedExecError::UnknownProcessId { process_id })?;
+        if !entry.attachment_state.is_attached_by(owner_id) {
+            return Err(UnifiedExecError::ProcessNotAttachedByOwner {
+                process_id,
+                owner_id: owner_id.to_string(),
+            });
+        }
+        entry.attachment_state = AttachmentState::SecureInputPending {
+            owner_id: owner_id.to_string(),
+            kind,
+        };
+        Ok(())
+    }
+
+    pub async fn clear_secure_input_pending(
+        &self,
+        process_id: i32,
+        owner_id: &str,
+    ) -> Result<(), UnifiedExecError> {
+        let mut store = self.process_store.lock().await;
+        let entry = store
+            .processes
+            .get_mut(&process_id)
+            .ok_or(UnifiedExecError::UnknownProcessId { process_id })?;
+        if !entry.attachment_state.is_attached_by(owner_id) {
+            return Err(UnifiedExecError::ProcessNotAttachedByOwner {
+                process_id,
+                owner_id: owner_id.to_string(),
+            });
+        }
+        entry.attachment_state = AttachmentState::UserAttached {
+            owner_id: owner_id.to_string(),
+        };
+        Ok(())
     }
 
     pub(crate) async fn exec_command(
@@ -404,6 +569,50 @@ impl UnifiedExecProcessManager {
         &self,
         request: WriteStdinRequest<'_>,
     ) -> Result<ExecCommandToolOutput, UnifiedExecError> {
+        self.write_stdin_with_writer(request, TerminalWriter::Model)
+            .await
+    }
+
+    pub async fn write_user_stdin(
+        &self,
+        owner_id: &str,
+        request: WriteStdinRequest<'_>,
+    ) -> Result<ExecCommandToolOutput, UnifiedExecError> {
+        self.write_stdin_with_writer(request, TerminalWriter::User { owner_id })
+            .await
+    }
+
+    pub async fn resize_process(
+        &self,
+        process_id: i32,
+        owner_id: &str,
+        size: TerminalSize,
+    ) -> Result<(), UnifiedExecError> {
+        let process = {
+            let mut store = self.process_store.lock().await;
+            let entry = store
+                .processes
+                .get_mut(&process_id)
+                .ok_or(UnifiedExecError::UnknownProcessId { process_id })?;
+            if !entry.attachment_state.is_attached_by(owner_id) {
+                return Err(UnifiedExecError::ProcessNotAttachedByOwner {
+                    process_id,
+                    owner_id: owner_id.to_string(),
+                });
+            }
+            Arc::clone(&entry.process)
+        };
+
+        process
+            .resize(size)
+            .map_err(|_err| UnifiedExecError::ResizeUnsupported { process_id })
+    }
+
+    async fn write_stdin_with_writer(
+        &self,
+        request: WriteStdinRequest<'_>,
+        writer: TerminalWriter<'_>,
+    ) -> Result<ExecCommandToolOutput, UnifiedExecError> {
         let process_id = request.process_id;
 
         let PreparedProcessHandles {
@@ -417,9 +626,22 @@ impl UnifiedExecProcessManager {
             command: session_command,
             process_id,
             tty,
-            ..
+            attachment_state,
         } = self.prepare_process_handles(process_id).await?;
         let mut status_after_write = None;
+
+        match writer {
+            TerminalWriter::Model if attachment_state.is_user_attached() => {
+                return Err(UnifiedExecError::ProcessAttachedByUser { process_id });
+            }
+            TerminalWriter::User { owner_id } if !attachment_state.is_attached_by(owner_id) => {
+                return Err(UnifiedExecError::ProcessNotAttachedByOwner {
+                    process_id,
+                    owner_id: owner_id.to_string(),
+                });
+            }
+            TerminalWriter::Model | TerminalWriter::User { .. } => {}
+        }
 
         if !request.input.is_empty() {
             if !tty {
@@ -584,6 +806,7 @@ impl UnifiedExecProcessManager {
             command: entry.command.clone(),
             process_id: entry.process_id,
             tty: entry.tty,
+            attachment_state: entry.attachment_state.clone(),
         })
     }
 
@@ -608,6 +831,8 @@ impl UnifiedExecProcessManager {
             tty,
             network_approval_id,
             session: Arc::downgrade(&context.session),
+            transcript: Arc::clone(&transcript),
+            attachment_state: AttachmentState::Detached,
             last_used: started_at,
         };
         let (number_processes, pruned_entry) = {
@@ -924,7 +1149,7 @@ impl UnifiedExecProcessManager {
     }
 
     // Centralized pruning policy so we can easily swap strategies later.
-    fn process_id_to_prune_from_meta(meta: &[(i32, Instant, bool)]) -> Option<i32> {
+    pub(super) fn process_id_to_prune_from_meta(meta: &[(i32, Instant, bool)]) -> Option<i32> {
         if meta.is_empty() {
             return None;
         }

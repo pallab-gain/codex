@@ -16,6 +16,7 @@ use codex_app_server_protocol::PluginListResponse;
 use codex_app_server_protocol::PluginReadParams;
 use codex_app_server_protocol::PluginReadResponse;
 use codex_app_server_protocol::PluginUninstallResponse;
+use codex_app_server_protocol::TerminalInputRedactionKind;
 use codex_chatgpt::connectors::AppInfo;
 use codex_file_search::FileMatch;
 use codex_protocol::ThreadId;
@@ -76,6 +77,14 @@ pub(crate) enum WindowsSandboxEnableMode {
 #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 pub(crate) struct ConnectorsSnapshot {
     pub(crate) connectors: Vec<AppInfo>,
+}
+
+pub(crate) struct SensitiveTerminalInput(pub(crate) String);
+
+impl std::fmt::Debug for SensitiveTerminalInput {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("[redacted]")
+    }
 }
 
 /// Distinguishes why a rate-limit refresh was requested so the completion
@@ -293,6 +302,34 @@ pub(crate) enum AppEvent {
     /// Result of fetching MCP inventory via app-server RPCs.
     McpInventoryLoaded {
         result: Result<Vec<McpServerStatus>, String>,
+    },
+
+    ListBackgroundTerminals {
+        thread_id: ThreadId,
+        open_picker: bool,
+    },
+
+    AttachBackgroundTerminal {
+        thread_id: ThreadId,
+        process_id: String,
+    },
+
+    DetachBackgroundTerminal {
+        thread_id: ThreadId,
+        process_id: String,
+    },
+
+    WriteBackgroundTerminalInput {
+        thread_id: ThreadId,
+        process_id: String,
+        data: String,
+    },
+
+    WriteBackgroundTerminalSecureInput {
+        thread_id: ThreadId,
+        process_id: String,
+        data: SensitiveTerminalInput,
+        kind: TerminalInputRedactionKind,
     },
 
     InsertHistoryCell(Box<dyn HistoryCell>),

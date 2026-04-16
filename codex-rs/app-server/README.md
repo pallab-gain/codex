@@ -153,6 +153,12 @@ Example with notification opt-out:
 - `thread/compact/start` — trigger conversation history compaction for a thread; returns `{}` immediately while progress streams through standard turn/item notifications.
 - `thread/shellCommand` — run a user-initiated `!` shell command against a thread; this runs unsandboxed with full access rather than inheriting the thread sandbox policy. Returns `{}` immediately while progress streams through standard turn/item notifications and any active turn receives the formatted output in its message stream.
 - `thread/backgroundTerminals/clean` — terminate all running background terminals for a thread (experimental; requires `capabilities.experimentalApi`); returns `{}` when the cleanup request is accepted.
+- `thread/backgroundTerminals/list` — list running or recently exited background terminals for a thread, including `processId`, command preview, attach state, TTY capability, and any pending secure-input prompt.
+- `thread/backgroundTerminal/attach` — attach the current client connection to one background terminal, return its retained output tail, and start streaming `thread/backgroundTerminal/outputDelta`, `thread/backgroundTerminal/exited`, and `thread/backgroundTerminal/attachmentChanged` notifications.
+- `thread/backgroundTerminal/detach` — release the current client’s attachment without terminating the underlying terminal.
+- `thread/backgroundTerminal/write` — send plaintext user input to an attached background terminal; this is rejected while another client owns the attachment.
+- `thread/backgroundTerminal/writeSecret` — send masked secret input to an attached background terminal without serializing the plaintext into history, transcripts, or protocol event payloads.
+- `thread/backgroundTerminal/resize` — forward terminal size changes to an attached PTY-backed background terminal.
 - `thread/rollback` — drop the last N turns from the agent’s in-memory context and persist a rollback marker in the rollout so future resumes see the pruned history; returns the updated `thread` (with `turns` populated) on success.
 - `turn/start` — add user input to a thread and begin Codex generation; responds with the initial `turn` object and streams `turn/started`, `item/*`, and `turn/completed` notifications. For `collaborationMode`, `settings.developer_instructions: null` means "use built-in instructions for the selected mode".
 - `thread/inject_items` — append raw Responses API items to a loaded thread’s model-visible history without starting a user turn; returns `{}` on success.
@@ -685,6 +691,41 @@ Use `thread/backgroundTerminals/clean` to terminate all running background termi
 } }
 { "id": 35, "result": {} }
 ```
+
+### Example: Attach to a background terminal
+
+Use `thread/backgroundTerminals/list` to discover attachable terminals, then `thread/backgroundTerminal/attach` to take over one session. While attached, keystrokes should go through `thread/backgroundTerminal/write`, resizes through `thread/backgroundTerminal/resize`, and optional masked secrets through `thread/backgroundTerminal/writeSecret`.
+
+```json
+{ "method": "thread/backgroundTerminals/list", "id": 36, "params": {
+    "threadId": "thr_123"
+} }
+{ "id": 36, "result": { "terminals": [
+    {
+        "processId": "4242",
+        "command": "git push origin feature",
+        "tty": true,
+        "attached": false,
+        "secureInputPrompt": "password"
+    }
+] } }
+{ "method": "thread/backgroundTerminal/attach", "id": 37, "params": {
+    "threadId": "thr_123",
+    "processId": "4242"
+} }
+{ "id": 37, "result": {
+    "terminal": {
+        "processId": "4242",
+        "command": "git push origin feature",
+        "tty": true,
+        "attached": true,
+        "secureInputPrompt": "password"
+    },
+    "initialOutputBase64": "UGFzc3dvcmQ6IA=="
+} }
+```
+
+If the connection drops while attached, the server auto-detaches that client and keeps the underlying background terminal alive.
 
 ### Example: Steer an active turn
 

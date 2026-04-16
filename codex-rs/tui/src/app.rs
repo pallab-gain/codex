@@ -6,6 +6,7 @@ use crate::app_event::ExitMode;
 use crate::app_event::FeedbackCategory;
 use crate::app_event::RateLimitRefreshOrigin;
 use crate::app_event::RealtimeAudioDeviceKind;
+use crate::app_event::SensitiveTerminalInput;
 #[cfg(target_os = "windows")]
 use crate::app_event::WindowsSandboxEnableMode;
 use crate::app_event_sender::AppEventSender;
@@ -69,6 +70,7 @@ use crate::tui;
 use crate::tui::TuiEvent;
 use crate::update_action::UpdateAction;
 use crate::version::CODEX_CLI_VERSION;
+use base64::Engine;
 use codex_ansi_escape::ansi_escape_line;
 use codex_app_server_client::AppServerRequestHandle;
 use codex_app_server_client::TypedRequestError;
@@ -4175,6 +4177,21 @@ impl App {
                     }
                     // Allow widgets to process any pending timers before rendering.
                     self.chat_widget.pre_draw_tick();
+                    let terminal_size = tui.terminal.size()?;
+                    if let (Some(thread_id), Some((process_id, rows, cols))) = (
+                        self.chat_widget.thread_id(),
+                        self.chat_widget.attached_terminal_resize_request(
+                            terminal_size.width,
+                            terminal_size.height,
+                        ),
+                    ) && let Err(err) = app_server
+                        .thread_background_terminal_resize(thread_id, process_id, rows, cols)
+                        .await
+                    {
+                        self.chat_widget.add_error_message(format!(
+                            "Failed to resize attached terminal: {err}"
+                        ));
+                    }
                     tui.draw(
                         self.chat_widget.desired_height(tui.terminal.size()?.width),
                         |frame| {
@@ -4669,6 +4686,93 @@ impl App {
             }
             AppEvent::McpInventoryLoaded { result } => {
                 self.handle_mcp_inventory_result(result);
+            }
+            AppEvent::ListBackgroundTerminals {
+                thread_id,
+                open_picker,
+            } => match app_server.thread_background_terminals_list(thread_id).await {
+                Ok(terminals) => {
+                    self.chat_widget.on_background_terminal_list_loaded(
+                        thread_id,
+                        terminals,
+                        open_picker,
+                    );
+                }
+                Err(err) => {
+                    self.chat_widget
+                        .add_error_message(format!("Failed to list background terminals: {err}"));
+                }
+            },
+            AppEvent::AttachBackgroundTerminal {
+                thread_id,
+                process_id,
+            } => match app_server
+                .thread_background_terminal_attach(thread_id, process_id)
+                .await
+            {
+                Ok(response) => {
+                    let initial_output = match base64::engine::general_purpose::STANDARD
+                        .decode(response.output_base64)
+                    {
+                        Ok(output) => output,
+                        Err(err) => {
+                            self.chat_widget.add_error_message(format!(
+                                "Failed to decode terminal output: {err}"
+                            ));
+                            Vec::new()
+                        }
+                    };
+                    self.chat_widget
+                        .attach_background_terminal(response.terminal, &initial_output);
+                }
+                Err(err) => {
+                    self.chat_widget
+                        .add_error_message(format!("Failed to attach terminal: {err}"));
+                }
+            },
+            AppEvent::DetachBackgroundTerminal {
+                thread_id,
+                process_id,
+            } => match app_server
+                .thread_background_terminal_detach(thread_id, process_id.clone())
+                .await
+            {
+                Ok(()) => {
+                    self.chat_widget
+                        .detach_background_terminal_local(&process_id, None);
+                }
+                Err(err) => {
+                    self.chat_widget
+                        .add_error_message(format!("Failed to detach terminal: {err}"));
+                }
+            },
+            AppEvent::WriteBackgroundTerminalInput {
+                thread_id,
+                process_id,
+                data,
+            } => {
+                if let Err(err) = app_server
+                    .thread_background_terminal_write(thread_id, process_id, data)
+                    .await
+                {
+                    self.chat_widget.add_error_message(format!(
+                        "Failed to write to background terminal: {err}"
+                    ));
+                }
+            }
+            AppEvent::WriteBackgroundTerminalSecureInput {
+                thread_id,
+                process_id,
+                data: SensitiveTerminalInput(data),
+                kind,
+            } => {
+                if let Err(err) = app_server
+                    .thread_background_terminal_write_secret(thread_id, process_id, data, kind)
+                    .await
+                {
+                    self.chat_widget
+                        .add_error_message(format!("Failed to send secure terminal input: {err}"));
+                }
             }
             AppEvent::StartFileSearch(query) => {
                 self.file_search.on_user_query(query);

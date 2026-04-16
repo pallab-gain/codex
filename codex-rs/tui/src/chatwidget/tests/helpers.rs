@@ -220,6 +220,7 @@ pub(super) async fn make_chatwidget_manual(
         turn_sleep_inhibitor: SleepInhibitor::new(prevent_idle_sleep),
         task_complete_pending: false,
         unified_exec_processes: Vec::new(),
+        attached_terminal: None,
         agent_turn_running: false,
         mcp_startup_status: None,
         mcp_startup_expected_servers: None,
@@ -531,12 +532,19 @@ pub(super) fn terminal_interaction(
     process_id: &str,
     stdin: &str,
 ) {
+    let input = if stdin.is_empty() {
+        TerminalInputRecord::EmptyPoll
+    } else {
+        TerminalInputRecord::Plaintext {
+            text: stdin.to_string(),
+        }
+    };
     chat.handle_codex_event(Event {
         id: call_id.to_string(),
         msg: EventMsg::TerminalInteraction(TerminalInteractionEvent {
             call_id: call_id.to_string(),
             process_id: process_id.to_string(),
-            stdin: stdin.to_string(),
+            input,
         }),
     });
 }

@@ -1,0 +1,61 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "definitions": {
+    "BackgroundTerminal": {
+      "properties": {
+        "attached": {
+          "type": "boolean"
+        },
+        "command": {
+          "type": "string"
+        },
+        "processId": {
+          "type": "string"
+        },
+        "secureInputPrompt": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/TerminalInputRedactionKind"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "tty": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "attached",
+        "command",
+        "processId",
+        "tty"
+      ],
+      "type": "object"
+    },
+    "TerminalInputRedactionKind": {
+      "enum": [
+        "password",
+        "passphrase",
+        "pin",
+        "unknown"
+      ],
+      "type": "string"
+    }
+  },
+  "properties": {
+    "outputBase64": {
+      "type": "string"
+    },
+    "terminal": {
+      "$ref": "#/definitions/BackgroundTerminal"
+    }
+  },
+  "required": [
+    "outputBase64",
+    "terminal"
+  ],
+  "title": "ThreadBackgroundTerminalAttachResponse",
+  "type": "object"
+}

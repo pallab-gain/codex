@@ -37,6 +37,8 @@ use tokio::sync::Mutex;
 use crate::codex::Session;
 use crate::codex::TurnContext;
 use crate::sandboxing::SandboxPermissions;
+use codex_protocol::protocol::TerminalInputRedactionKind;
+use tokio_util::sync::CancellationToken;
 
 mod async_watcher;
 mod errors;
@@ -49,7 +51,9 @@ pub(crate) fn set_deterministic_process_ids_for_tests(enabled: bool) {
     process_manager::set_deterministic_process_ids_for_tests(enabled);
 }
 
-pub(crate) use errors::UnifiedExecError;
+pub use errors::UnifiedExecError;
+#[cfg(test)]
+pub(crate) use head_tail_buffer::HeadTailBuffer;
 pub(crate) use process::NoopSpawnLifecycle;
 #[cfg(unix)]
 pub(crate) use process::SpawnLifecycle;
@@ -109,6 +113,57 @@ pub(crate) struct WriteStdinRequest<'a> {
     pub max_output_tokens: Option<usize>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AttachmentState {
+    Detached,
+    UserAttached {
+        owner_id: String,
+    },
+    SecureInputPending {
+        owner_id: String,
+        kind: TerminalInputRedactionKind,
+    },
+}
+
+impl AttachmentState {
+    pub fn is_attached_by(&self, owner_id: &str) -> bool {
+        match self {
+            Self::UserAttached {
+                owner_id: attached_owner_id,
+            }
+            | Self::SecureInputPending {
+                owner_id: attached_owner_id,
+                ..
+            } => attached_owner_id == owner_id,
+            Self::Detached => false,
+        }
+    }
+
+    pub fn is_user_attached(&self) -> bool {
+        matches!(
+            self,
+            Self::UserAttached { .. } | Self::SecureInputPending { .. }
+        )
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct BackgroundTerminalSummary {
+    pub process_id: i32,
+    pub call_id: String,
+    pub command: Vec<String>,
+    pub tty: bool,
+    pub attachment_state: AttachmentState,
+    pub recent_output: Vec<u8>,
+}
+
+#[derive(Debug)]
+pub struct BackgroundTerminalAttach {
+    pub summary: BackgroundTerminalSummary,
+    pub output_rx: tokio::sync::broadcast::Receiver<Vec<u8>>,
+    pub exit_token: CancellationToken,
+}
+
 #[derive(Default)]
 pub(crate) struct ProcessStore {
     processes: HashMap<i32, ProcessEntry>,
@@ -151,6 +206,8 @@ struct ProcessEntry {
     tty: bool,
     network_approval_id: Option<String>,
     session: Weak<Session>,
+    transcript: Arc<tokio::sync::Mutex<head_tail_buffer::HeadTailBuffer>>,
+    attachment_state: AttachmentState,
     last_used: tokio::time::Instant,
 }
 

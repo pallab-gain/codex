@@ -3128,14 +3128,43 @@ pub struct ExecCommandOutputDeltaEvent {
 }
 
 #[serde_as]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum TerminalInputRedactionKind {
+    Password,
+    Passphrase,
+    Pin,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, JsonSchema, TS)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum TerminalInputRecord {
+    Plaintext {
+        text: String,
+    },
+    Redacted {
+        len: usize,
+        kind: TerminalInputRedactionKind,
+    },
+    EmptyPoll,
+}
+
+impl TerminalInputRecord {
+    pub fn is_empty_poll(&self) -> bool {
+        matches!(self, Self::EmptyPoll)
+    }
+}
+
+#[serde_as]
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, JsonSchema, TS)]
 pub struct TerminalInteractionEvent {
     /// Identifier for the ExecCommandBegin that produced this chunk.
     pub call_id: String,
     /// Process id associated with the running command.
     pub process_id: String,
-    /// Stdin sent to the running session.
-    pub stdin: String,
+    /// Input sent to the running session.
+    pub input: TerminalInputRecord,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, TS)]

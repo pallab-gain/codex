@@ -2,7 +2,7 @@ use codex_protocol::exec_output::ExecToolCallOutput;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
-pub(crate) enum UnifiedExecError {
+pub enum UnifiedExecError {
     #[error("Failed to create unified exec process: {message}")]
     CreateProcess { message: String },
     #[error("Unified exec process failed: {message}")]
@@ -16,6 +16,12 @@ pub(crate) enum UnifiedExecError {
         "stdin is closed for this session; rerun exec_command with tty=true to keep stdin open"
     )]
     StdinClosed,
+    #[error("background terminal {process_id} is currently attached by a user")]
+    ProcessAttachedByUser { process_id: i32 },
+    #[error("background terminal {process_id} is not attached by owner {owner_id}")]
+    ProcessNotAttachedByOwner { process_id: i32, owner_id: String },
+    #[error("background terminal {process_id} does not support PTY resize")]
+    ResizeUnsupported { process_id: i32 },
     #[error("missing command line for unified exec request")]
     MissingCommandLine,
     #[error("Command denied by sandbox: {message}")]

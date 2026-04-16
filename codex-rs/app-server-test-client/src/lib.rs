@@ -53,6 +53,7 @@ use codex_app_server_protocol::RequestId;
 use codex_app_server_protocol::SandboxPolicy;
 use codex_app_server_protocol::ServerNotification;
 use codex_app_server_protocol::ServerRequest;
+use codex_app_server_protocol::TerminalInputRecord;
 use codex_app_server_protocol::ThreadDecrementElicitationParams;
 use codex_app_server_protocol::ThreadDecrementElicitationResponse;
 use codex_app_server_protocol::ThreadIncrementElicitationParams;
@@ -1738,7 +1739,17 @@ impl CodexClient {
                     std::io::stdout().flush().ok();
                 }
                 ServerNotification::TerminalInteraction(delta) => {
-                    println!("[stdin sent: {}]", delta.stdin);
+                    match delta.input {
+                        TerminalInputRecord::Plaintext { text } => {
+                            println!("[stdin sent: {text}]");
+                        }
+                        TerminalInputRecord::Redacted { len, kind } => {
+                            println!("[stdin sent: redacted {kind:?} ({len} chars)]");
+                        }
+                        TerminalInputRecord::EmptyPoll => {
+                            println!("[stdin poll]");
+                        }
+                    }
                     std::io::stdout().flush().ok();
                 }
                 ServerNotification::ItemStarted(payload) => {

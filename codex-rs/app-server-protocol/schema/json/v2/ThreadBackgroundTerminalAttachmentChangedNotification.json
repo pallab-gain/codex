@@ -1,0 +1,42 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "definitions": {
+    "TerminalInputRedactionKind": {
+      "enum": [
+        "password",
+        "passphrase",
+        "pin",
+        "unknown"
+      ],
+      "type": "string"
+    }
+  },
+  "properties": {
+    "attached": {
+      "type": "boolean"
+    },
+    "processId": {
+      "type": "string"
+    },
+    "secureInputPrompt": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/TerminalInputRedactionKind"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "threadId": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "attached",
+    "processId",
+    "threadId"
+  ],
+  "title": "ThreadBackgroundTerminalAttachmentChangedNotification",
+  "type": "object"
+}

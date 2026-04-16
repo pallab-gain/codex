@@ -311,6 +311,30 @@ client_request_definitions! {
         params: v2::ThreadBackgroundTerminalsCleanParams,
         response: v2::ThreadBackgroundTerminalsCleanResponse,
     },
+    ThreadBackgroundTerminalsList => "thread/backgroundTerminals/list" {
+        params: v2::ThreadBackgroundTerminalsListParams,
+        response: v2::ThreadBackgroundTerminalsListResponse,
+    },
+    ThreadBackgroundTerminalAttach => "thread/backgroundTerminal/attach" {
+        params: v2::ThreadBackgroundTerminalAttachParams,
+        response: v2::ThreadBackgroundTerminalAttachResponse,
+    },
+    ThreadBackgroundTerminalDetach => "thread/backgroundTerminal/detach" {
+        params: v2::ThreadBackgroundTerminalDetachParams,
+        response: v2::ThreadBackgroundTerminalDetachResponse,
+    },
+    ThreadBackgroundTerminalWrite => "thread/backgroundTerminal/write" {
+        params: v2::ThreadBackgroundTerminalWriteParams,
+        response: v2::ThreadBackgroundTerminalWriteResponse,
+    },
+    ThreadBackgroundTerminalWriteSecret => "thread/backgroundTerminal/writeSecret" {
+        params: v2::ThreadBackgroundTerminalWriteSecretParams,
+        response: v2::ThreadBackgroundTerminalWriteSecretResponse,
+    },
+    ThreadBackgroundTerminalResize => "thread/backgroundTerminal/resize" {
+        params: v2::ThreadBackgroundTerminalResizeParams,
+        response: v2::ThreadBackgroundTerminalResizeResponse,
+    },
     ThreadRollback => "thread/rollback" {
         params: v2::ThreadRollbackParams,
         response: v2::ThreadRollbackResponse,
@@ -1008,6 +1032,9 @@ server_notification_definitions! {
     CommandExecOutputDelta => "command/exec/outputDelta" (v2::CommandExecOutputDeltaNotification),
     CommandExecutionOutputDelta => "item/commandExecution/outputDelta" (v2::CommandExecutionOutputDeltaNotification),
     TerminalInteraction => "item/commandExecution/terminalInteraction" (v2::TerminalInteractionNotification),
+    ThreadBackgroundTerminalOutputDelta => "thread/backgroundTerminal/outputDelta" (v2::ThreadBackgroundTerminalOutputDeltaNotification),
+    ThreadBackgroundTerminalExited => "thread/backgroundTerminal/exited" (v2::ThreadBackgroundTerminalExitedNotification),
+    ThreadBackgroundTerminalAttachmentChanged => "thread/backgroundTerminal/attachmentChanged" (v2::ThreadBackgroundTerminalAttachmentChangedNotification),
     FileChangeOutputDelta => "item/fileChange/outputDelta" (v2::FileChangeOutputDeltaNotification),
     ServerRequestResolved => "serverRequest/resolved" (v2::ServerRequestResolvedNotification),
     McpToolCallProgress => "item/mcpToolCall/progress" (v2::McpToolCallProgressNotification),

@@ -359,6 +359,15 @@ fn server_notification_thread_target(
         ServerNotification::TerminalInteraction(notification) => {
             Some(notification.thread_id.as_str())
         }
+        ServerNotification::ThreadBackgroundTerminalOutputDelta(notification) => {
+            Some(notification.thread_id.as_str())
+        }
+        ServerNotification::ThreadBackgroundTerminalExited(notification) => {
+            Some(notification.thread_id.as_str())
+        }
+        ServerNotification::ThreadBackgroundTerminalAttachmentChanged(notification) => {
+            Some(notification.thread_id.as_str())
+        }
         ServerNotification::FileChangeOutputDelta(notification) => {
             Some(notification.thread_id.as_str())
         }

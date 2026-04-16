@@ -1735,7 +1735,7 @@ pub(crate) async fn apply_bespoke_event_handling(
                 turn_id: event_turn_id.clone(),
                 item_id,
                 process_id: terminal_event.process_id,
-                stdin: terminal_event.stdin,
+                input: terminal_event.input.into(),
             };
             outgoing
                 .send_server_notification(ServerNotification::TerminalInteraction(notification))

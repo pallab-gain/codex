@@ -1,0 +1,10 @@
+---
+source: tui/src/chatwidget/tests/background_terminal.rs
+expression: before
+---
+Secure password
+Input is sent to the terminal and is not stored in history or logs.
+
+
+Enter to send securely, Esc to cancel.
+Press enter to confirm or esc to go back

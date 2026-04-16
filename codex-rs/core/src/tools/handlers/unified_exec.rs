@@ -27,6 +27,7 @@ use codex_otel::SessionTelemetry;
 use codex_otel::TOOL_CALL_UNIFIED_EXEC_METRIC;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::protocol::EventMsg;
+use codex_protocol::protocol::TerminalInputRecord;
 use codex_protocol::protocol::TerminalInteractionEvent;
 use codex_shell_command::is_safe_command::is_known_safe_command;
 use codex_tools::UnifiedExecShellMode;
@@ -353,7 +354,13 @@ impl ToolHandler for UnifiedExecHandler {
                 let interaction = TerminalInteractionEvent {
                     call_id: response.event_call_id.clone(),
                     process_id: args.session_id.to_string(),
-                    stdin: args.chars.clone(),
+                    input: if args.chars.is_empty() {
+                        TerminalInputRecord::EmptyPoll
+                    } else {
+                        TerminalInputRecord::Plaintext {
+                            text: args.chars.clone(),
+                        }
+                    },
                 };
                 session
                     .send_event(turn.as_ref(), EventMsg::TerminalInteraction(interaction))

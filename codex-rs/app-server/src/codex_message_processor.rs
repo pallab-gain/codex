@@ -18,6 +18,7 @@ use crate::outgoing_message::RequestContext;
 use crate::outgoing_message::ThreadScopedOutgoingMessageSender;
 use crate::thread_status::ThreadWatchManager;
 use crate::thread_status::resolve_thread_status;
+use base64::Engine;
 use chrono::DateTime;
 use chrono::SecondsFormat;
 use chrono::Utc;
@@ -34,6 +35,7 @@ use codex_app_server_protocol::AppsListResponse;
 use codex_app_server_protocol::AskForApproval;
 use codex_app_server_protocol::AuthMode;
 use codex_app_server_protocol::AuthMode as CoreAuthMode;
+use codex_app_server_protocol::BackgroundTerminal;
 use codex_app_server_protocol::CancelLoginAccountParams;
 use codex_app_server_protocol::CancelLoginAccountResponse;
 use codex_app_server_protocol::CancelLoginAccountStatus;
@@ -123,12 +125,28 @@ use codex_app_server_protocol::SkillsConfigWriteParams;
 use codex_app_server_protocol::SkillsConfigWriteResponse;
 use codex_app_server_protocol::SkillsListParams;
 use codex_app_server_protocol::SkillsListResponse;
+use codex_app_server_protocol::TerminalInteractionNotification;
 use codex_app_server_protocol::Thread;
 use codex_app_server_protocol::ThreadArchiveParams;
 use codex_app_server_protocol::ThreadArchiveResponse;
 use codex_app_server_protocol::ThreadArchivedNotification;
+use codex_app_server_protocol::ThreadBackgroundTerminalAttachParams;
+use codex_app_server_protocol::ThreadBackgroundTerminalAttachResponse;
+use codex_app_server_protocol::ThreadBackgroundTerminalAttachmentChangedNotification;
+use codex_app_server_protocol::ThreadBackgroundTerminalDetachParams;
+use codex_app_server_protocol::ThreadBackgroundTerminalDetachResponse;
+use codex_app_server_protocol::ThreadBackgroundTerminalExitedNotification;
+use codex_app_server_protocol::ThreadBackgroundTerminalOutputDeltaNotification;
+use codex_app_server_protocol::ThreadBackgroundTerminalResizeParams;
+use codex_app_server_protocol::ThreadBackgroundTerminalResizeResponse;
+use codex_app_server_protocol::ThreadBackgroundTerminalWriteParams;
+use codex_app_server_protocol::ThreadBackgroundTerminalWriteResponse;
+use codex_app_server_protocol::ThreadBackgroundTerminalWriteSecretParams;
+use codex_app_server_protocol::ThreadBackgroundTerminalWriteSecretResponse;
 use codex_app_server_protocol::ThreadBackgroundTerminalsCleanParams;
 use codex_app_server_protocol::ThreadBackgroundTerminalsCleanResponse;
+use codex_app_server_protocol::ThreadBackgroundTerminalsListParams;
+use codex_app_server_protocol::ThreadBackgroundTerminalsListResponse;
 use codex_app_server_protocol::ThreadClosedNotification;
 use codex_app_server_protocol::ThreadCompactStartParams;
 use codex_app_server_protocol::ThreadCompactStartResponse;
@@ -202,6 +220,7 @@ use codex_backend_client::Client as BackendClient;
 use codex_chatgpt::connectors;
 use codex_cloud_requirements::cloud_requirements_loader;
 use codex_config::types::McpServerTransportConfig;
+use codex_core::BackgroundTerminalAttachmentState;
 use codex_core::CodexThread;
 use codex_core::Cursor as RolloutCursor;
 use codex_core::ForkSnapshot;
@@ -308,6 +327,8 @@ use codex_protocol::protocol::ReviewTarget as CoreReviewTarget;
 use codex_protocol::protocol::RolloutItem;
 use codex_protocol::protocol::SessionConfiguredEvent;
 use codex_protocol::protocol::SessionMetaLine;
+use codex_protocol::protocol::TerminalInputRecord;
+use codex_protocol::protocol::TerminalInputRedactionKind;
 use codex_protocol::protocol::ThreadNameUpdatedEvent;
 use codex_protocol::protocol::USER_MESSAGE_BEGIN;
 use codex_protocol::protocol::W3cTraceContext;
@@ -325,6 +346,7 @@ use codex_state::log_db::LogDbLayer;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_json_to_toml::json_to_toml;
 use codex_utils_pty::DEFAULT_OUTPUT_BYTES_CAP;
+use codex_utils_pty::TerminalSize;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -923,6 +945,42 @@ impl CodexMessageProcessor {
             }
             ClientRequest::ThreadBackgroundTerminalsClean { request_id, params } => {
                 self.thread_background_terminals_clean(
+                    to_connection_request_id(request_id),
+                    params,
+                )
+                .await;
+            }
+            ClientRequest::ThreadBackgroundTerminalsList { request_id, params } => {
+                self.thread_background_terminals_list(to_connection_request_id(request_id), params)
+                    .await;
+            }
+            ClientRequest::ThreadBackgroundTerminalAttach { request_id, params } => {
+                self.thread_background_terminal_attach(
+                    to_connection_request_id(request_id),
+                    params,
+                )
+                .await;
+            }
+            ClientRequest::ThreadBackgroundTerminalDetach { request_id, params } => {
+                self.thread_background_terminal_detach(
+                    to_connection_request_id(request_id),
+                    params,
+                )
+                .await;
+            }
+            ClientRequest::ThreadBackgroundTerminalWrite { request_id, params } => {
+                self.thread_background_terminal_write(to_connection_request_id(request_id), params)
+                    .await;
+            }
+            ClientRequest::ThreadBackgroundTerminalWriteSecret { request_id, params } => {
+                self.thread_background_terminal_write_secret(
+                    to_connection_request_id(request_id),
+                    params,
+                )
+                .await;
+            }
+            ClientRequest::ThreadBackgroundTerminalResize { request_id, params } => {
+                self.thread_background_terminal_resize(
                     to_connection_request_id(request_id),
                     params,
                 )
@@ -3744,6 +3802,422 @@ impl CodexMessageProcessor {
         }
     }
 
+    async fn thread_background_terminals_list(
+        &self,
+        request_id: ConnectionRequestId,
+        params: ThreadBackgroundTerminalsListParams,
+    ) {
+        let ThreadBackgroundTerminalsListParams { thread_id } = params;
+
+        let (_, thread) = match self.load_thread(&thread_id).await {
+            Ok(v) => v,
+            Err(error) => {
+                self.outgoing.send_error(request_id, error).await;
+                return;
+            }
+        };
+
+        let data = thread
+            .list_background_terminals()
+            .await
+            .into_iter()
+            .map(background_terminal_from_core)
+            .collect();
+        self.outgoing
+            .send_response(request_id, ThreadBackgroundTerminalsListResponse { data })
+            .await;
+    }
+
+    async fn thread_background_terminal_attach(
+        &self,
+        request_id: ConnectionRequestId,
+        params: ThreadBackgroundTerminalAttachParams,
+    ) {
+        let ThreadBackgroundTerminalAttachParams {
+            thread_id,
+            process_id,
+        } = params;
+        let (loaded_thread_id, thread) = match self.load_thread(&thread_id).await {
+            Ok(v) => v,
+            Err(error) => {
+                self.outgoing.send_error(request_id, error).await;
+                return;
+            }
+        };
+        let parsed_process_id = match parse_background_terminal_process_id(&process_id) {
+            Ok(process_id) => process_id,
+            Err(error) => {
+                self.outgoing.send_error(request_id, error).await;
+                return;
+            }
+        };
+
+        let owner_id = background_terminal_owner_id(request_id.connection_id);
+        match thread
+            .attach_background_terminal(parsed_process_id, owner_id.clone())
+            .await
+        {
+            Ok(attach) => {
+                let initial_output = attach.summary.recent_output.clone();
+                let secure_input_prompt =
+                    detect_secret_prompt(&String::from_utf8_lossy(&attach.summary.recent_output));
+                if let Some(kind) = secure_input_prompt.clone() {
+                    let _ = thread
+                        .set_background_terminal_secure_input_pending(
+                            parsed_process_id,
+                            &owner_id,
+                            kind,
+                        )
+                        .await;
+                }
+                let terminal =
+                    background_terminal_from_core(refresh_background_terminal_summary_state(
+                        attach.summary,
+                        secure_input_prompt.clone(),
+                    ));
+                let connection_ids = self
+                    .thread_state_manager
+                    .subscribed_connection_ids(loaded_thread_id)
+                    .await;
+                self.outgoing
+                    .send_response(
+                        request_id,
+                        ThreadBackgroundTerminalAttachResponse {
+                            terminal: terminal.clone(),
+                            output_base64: base64::engine::general_purpose::STANDARD
+                                .encode(initial_output),
+                        },
+                    )
+                    .await;
+                self.outgoing
+                    .send_server_notification_to_connections(
+                        &connection_ids,
+                        ServerNotification::ThreadBackgroundTerminalAttachmentChanged(
+                            ThreadBackgroundTerminalAttachmentChangedNotification {
+                                thread_id: thread_id.clone(),
+                                process_id,
+                                attached: true,
+                                secure_input_prompt: terminal.secure_input_prompt,
+                            },
+                        ),
+                    )
+                    .await;
+                self.spawn_background_terminal_stream_task(
+                    thread_id,
+                    parsed_process_id,
+                    owner_id,
+                    attach.output_rx,
+                    attach.exit_token,
+                    secure_input_prompt,
+                );
+            }
+            Err(err) => {
+                self.send_internal_error(
+                    request_id,
+                    format!("failed to attach background terminal: {err}"),
+                )
+                .await;
+            }
+        }
+    }
+
+    async fn thread_background_terminal_detach(
+        &self,
+        request_id: ConnectionRequestId,
+        params: ThreadBackgroundTerminalDetachParams,
+    ) {
+        let ThreadBackgroundTerminalDetachParams {
+            thread_id,
+            process_id,
+        } = params;
+        let (loaded_thread_id, thread) = match self.load_thread(&thread_id).await {
+            Ok(v) => v,
+            Err(error) => {
+                self.outgoing.send_error(request_id, error).await;
+                return;
+            }
+        };
+        let parsed_process_id = match parse_background_terminal_process_id(&process_id) {
+            Ok(process_id) => process_id,
+            Err(error) => {
+                self.outgoing.send_error(request_id, error).await;
+                return;
+            }
+        };
+        let owner_id = background_terminal_owner_id(request_id.connection_id);
+
+        match thread
+            .detach_background_terminal(parsed_process_id, &owner_id)
+            .await
+        {
+            Ok(()) => {
+                self.outgoing
+                    .send_response(
+                        request_id.clone(),
+                        ThreadBackgroundTerminalDetachResponse {},
+                    )
+                    .await;
+                let connection_ids = self
+                    .thread_state_manager
+                    .subscribed_connection_ids(loaded_thread_id)
+                    .await;
+                self.outgoing
+                    .send_server_notification_to_connections(
+                        &connection_ids,
+                        ServerNotification::ThreadBackgroundTerminalAttachmentChanged(
+                            ThreadBackgroundTerminalAttachmentChangedNotification {
+                                thread_id,
+                                process_id,
+                                attached: false,
+                                secure_input_prompt: None,
+                            },
+                        ),
+                    )
+                    .await;
+            }
+            Err(err) => {
+                self.send_internal_error(
+                    request_id,
+                    format!("failed to detach background terminal: {err}"),
+                )
+                .await;
+            }
+        }
+    }
+
+    async fn thread_background_terminal_write(
+        &self,
+        request_id: ConnectionRequestId,
+        params: ThreadBackgroundTerminalWriteParams,
+    ) {
+        let ThreadBackgroundTerminalWriteParams {
+            thread_id,
+            process_id,
+            data_base64,
+        } = params;
+        let (loaded_thread_id, thread) = match self.load_thread(&thread_id).await {
+            Ok(v) => v,
+            Err(error) => {
+                self.outgoing.send_error(request_id, error).await;
+                return;
+            }
+        };
+        let parsed_process_id = match parse_background_terminal_process_id(&process_id) {
+            Ok(process_id) => process_id,
+            Err(error) => {
+                self.outgoing.send_error(request_id, error).await;
+                return;
+            }
+        };
+        let data = match base64::engine::general_purpose::STANDARD.decode(data_base64) {
+            Ok(data) => data,
+            Err(err) => {
+                self.outgoing
+                    .send_error(
+                        request_id,
+                        JSONRPCErrorError {
+                            code: INVALID_PARAMS_ERROR_CODE,
+                            message: format!("invalid base64 terminal input: {err}"),
+                            data: None,
+                        },
+                    )
+                    .await;
+                return;
+            }
+        };
+        let text = String::from_utf8_lossy(&data).to_string();
+        let owner_id = background_terminal_owner_id(request_id.connection_id);
+
+        match thread
+            .write_background_terminal_input(parsed_process_id, &owner_id, &text, 1_000)
+            .await
+        {
+            Ok(response) => {
+                self.outgoing
+                    .send_response(request_id.clone(), ThreadBackgroundTerminalWriteResponse {})
+                    .await;
+                let connection_ids = self
+                    .thread_state_manager
+                    .subscribed_connection_ids(loaded_thread_id)
+                    .await;
+                self.outgoing
+                    .send_server_notification_to_connections(
+                        &connection_ids,
+                        ServerNotification::TerminalInteraction(TerminalInteractionNotification {
+                            thread_id,
+                            turn_id: String::new(),
+                            item_id: response.event_call_id,
+                            process_id,
+                            input: if text.is_empty() {
+                                TerminalInputRecord::EmptyPoll.into()
+                            } else {
+                                TerminalInputRecord::Plaintext { text }.into()
+                            },
+                        }),
+                    )
+                    .await;
+            }
+            Err(err) => {
+                self.send_internal_error(
+                    request_id,
+                    format!("failed to write background terminal input: {err}"),
+                )
+                .await;
+            }
+        }
+    }
+
+    async fn thread_background_terminal_write_secret(
+        &self,
+        request_id: ConnectionRequestId,
+        params: ThreadBackgroundTerminalWriteSecretParams,
+    ) {
+        let ThreadBackgroundTerminalWriteSecretParams {
+            thread_id,
+            process_id,
+            data_base64,
+            kind,
+        } = params;
+        let (loaded_thread_id, thread) = match self.load_thread(&thread_id).await {
+            Ok(v) => v,
+            Err(error) => {
+                self.outgoing.send_error(request_id, error).await;
+                return;
+            }
+        };
+        let parsed_process_id = match parse_background_terminal_process_id(&process_id) {
+            Ok(process_id) => process_id,
+            Err(error) => {
+                self.outgoing.send_error(request_id, error).await;
+                return;
+            }
+        };
+        let data = match base64::engine::general_purpose::STANDARD.decode(data_base64) {
+            Ok(data) => data,
+            Err(err) => {
+                self.outgoing
+                    .send_error(
+                        request_id,
+                        JSONRPCErrorError {
+                            code: INVALID_PARAMS_ERROR_CODE,
+                            message: format!("invalid base64 terminal secret input: {err}"),
+                            data: None,
+                        },
+                    )
+                    .await;
+                return;
+            }
+        };
+        let text = String::from_utf8_lossy(&data).to_string();
+        let owner_id = background_terminal_owner_id(request_id.connection_id);
+
+        match thread
+            .write_background_terminal_secret_input(parsed_process_id, &owner_id, &text, 1_000)
+            .await
+        {
+            Ok(response) => {
+                let _ = thread
+                    .clear_background_terminal_secure_input_pending(parsed_process_id, &owner_id)
+                    .await;
+                self.outgoing
+                    .send_response(
+                        request_id.clone(),
+                        ThreadBackgroundTerminalWriteSecretResponse {},
+                    )
+                    .await;
+                let connection_ids = self
+                    .thread_state_manager
+                    .subscribed_connection_ids(loaded_thread_id)
+                    .await;
+                self.outgoing
+                    .send_server_notification_to_connections(
+                        &connection_ids,
+                        ServerNotification::TerminalInteraction(TerminalInteractionNotification {
+                            thread_id: thread_id.clone(),
+                            turn_id: String::new(),
+                            item_id: response.event_call_id,
+                            process_id: process_id.clone(),
+                            input: TerminalInputRecord::Redacted {
+                                len: text.chars().count(),
+                                kind: kind.into(),
+                            }
+                            .into(),
+                        }),
+                    )
+                    .await;
+                self.outgoing
+                    .send_server_notification_to_connections(
+                        &connection_ids,
+                        ServerNotification::ThreadBackgroundTerminalAttachmentChanged(
+                            ThreadBackgroundTerminalAttachmentChangedNotification {
+                                thread_id,
+                                process_id,
+                                attached: true,
+                                secure_input_prompt: None,
+                            },
+                        ),
+                    )
+                    .await;
+            }
+            Err(err) => {
+                self.send_internal_error(
+                    request_id,
+                    format!("failed to write background terminal secret input: {err}"),
+                )
+                .await;
+            }
+        }
+    }
+
+    async fn thread_background_terminal_resize(
+        &self,
+        request_id: ConnectionRequestId,
+        params: ThreadBackgroundTerminalResizeParams,
+    ) {
+        let ThreadBackgroundTerminalResizeParams {
+            thread_id,
+            process_id,
+            size,
+        } = params;
+        let (_, thread) = match self.load_thread(&thread_id).await {
+            Ok(v) => v,
+            Err(error) => {
+                self.outgoing.send_error(request_id, error).await;
+                return;
+            }
+        };
+        let parsed_process_id = match parse_background_terminal_process_id(&process_id) {
+            Ok(process_id) => process_id,
+            Err(error) => {
+                self.outgoing.send_error(request_id, error).await;
+                return;
+            }
+        };
+        let owner_id = background_terminal_owner_id(request_id.connection_id);
+        let size = TerminalSize {
+            rows: size.rows,
+            cols: size.cols,
+        };
+
+        match thread
+            .resize_background_terminal(parsed_process_id, &owner_id, size)
+            .await
+        {
+            Ok(()) => {
+                self.outgoing
+                    .send_response(request_id, ThreadBackgroundTerminalResizeResponse {})
+                    .await;
+            }
+            Err(err) => {
+                self.send_internal_error(
+                    request_id,
+                    format!("failed to resize background terminal: {err}"),
+                )
+                .await;
+            }
+        }
+    }
+
     async fn thread_shell_command(
         &self,
         request_id: ConnectionRequestId,
@@ -4113,12 +4587,104 @@ impl CodexMessageProcessor {
             .await;
 
         for thread_id in thread_ids {
-            if self.thread_manager.get_thread(thread_id).await.is_err() {
+            if let Ok(thread) = self.thread_manager.get_thread(thread_id).await {
+                let owner_id = background_terminal_owner_id(connection_id);
+                for terminal in thread.list_background_terminals().await {
+                    if terminal.attachment_state.is_attached_by(&owner_id) {
+                        let _ = thread
+                            .detach_background_terminal(terminal.process_id, &owner_id)
+                            .await;
+                    }
+                }
+            } else {
                 // Reconcile stale app-server bookkeeping when the thread has already been
                 // removed from the core manager.
                 self.finalize_thread_teardown(thread_id).await;
             }
         }
+    }
+
+    fn spawn_background_terminal_stream_task(
+        &self,
+        thread_id: String,
+        process_id: i32,
+        owner_id: String,
+        mut output_rx: tokio::sync::broadcast::Receiver<Vec<u8>>,
+        exit_token: tokio_util::sync::CancellationToken,
+        mut secure_input_prompt: Option<TerminalInputRedactionKind>,
+    ) {
+        let outgoing = Arc::clone(&self.outgoing);
+        let thread_state_manager = self.thread_state_manager.clone();
+        let thread_manager = Arc::clone(&self.thread_manager);
+        tokio::spawn(async move {
+            let Ok(parsed_thread_id) = ThreadId::from_string(&thread_id) else {
+                return;
+            };
+            let mut recent_output = String::new();
+            loop {
+                tokio::select! {
+                    _ = exit_token.cancelled() => {
+                        let connection_ids = thread_state_manager.subscribed_connection_ids(parsed_thread_id).await;
+                        outgoing.send_server_notification_to_connections(
+                            &connection_ids,
+                            ServerNotification::ThreadBackgroundTerminalExited(
+                                ThreadBackgroundTerminalExitedNotification {
+                                    thread_id: thread_id.clone(),
+                                    process_id: process_id.to_string(),
+                                    exit_code: None,
+                                },
+                            ),
+                        ).await;
+                        break;
+                    }
+                    recv = output_rx.recv() => {
+                        let Ok(delta) = recv else { break; };
+                        recent_output.push_str(&String::from_utf8_lossy(&delta));
+                        if recent_output.len() > 512 {
+                            let keep_from = recent_output.len().saturating_sub(512);
+                            recent_output = recent_output.split_off(keep_from);
+                        }
+                        let next_prompt = detect_secret_prompt(&recent_output);
+                        if next_prompt != secure_input_prompt {
+                            secure_input_prompt = next_prompt;
+                            if let Ok(thread) = thread_manager.get_thread(parsed_thread_id).await {
+                                match secure_input_prompt.as_ref() {
+                                    Some(kind) => {
+                                        let _ = thread.set_background_terminal_secure_input_pending(process_id, &owner_id, kind.clone()).await;
+                                    }
+                                    None => {
+                                        let _ = thread.clear_background_terminal_secure_input_pending(process_id, &owner_id).await;
+                                    }
+                                }
+                            }
+                            let connection_ids = thread_state_manager.subscribed_connection_ids(parsed_thread_id).await;
+                            outgoing.send_server_notification_to_connections(
+                                &connection_ids,
+                                ServerNotification::ThreadBackgroundTerminalAttachmentChanged(
+                                    ThreadBackgroundTerminalAttachmentChangedNotification {
+                                        thread_id: thread_id.clone(),
+                                        process_id: process_id.to_string(),
+                                        attached: true,
+                                        secure_input_prompt: secure_input_prompt.clone().map(Into::into),
+                                    },
+                                ),
+                            ).await;
+                        }
+                        let connection_ids = thread_state_manager.subscribed_connection_ids(parsed_thread_id).await;
+                        outgoing.send_server_notification_to_connections(
+                            &connection_ids,
+                            ServerNotification::ThreadBackgroundTerminalOutputDelta(
+                                ThreadBackgroundTerminalOutputDeltaNotification {
+                                    thread_id: thread_id.clone(),
+                                    process_id: process_id.to_string(),
+                                    delta_base64: base64::engine::general_purpose::STANDARD.encode(delta),
+                                },
+                            ),
+                        ).await;
+                    }
+                }
+            }
+        });
     }
 
     pub(crate) fn subscribe_running_assistant_turn_count(&self) -> watch::Receiver<usize> {
@@ -9895,6 +10461,85 @@ pub(crate) fn summary_to_thread(
     }
 }
 
+fn background_terminal_owner_id(connection_id: ConnectionId) -> String {
+    connection_id.0.to_string()
+}
+
+fn parse_background_terminal_process_id(
+    process_id: &str,
+) -> std::result::Result<i32, JSONRPCErrorError> {
+    process_id.parse::<i32>().map_err(|err| JSONRPCErrorError {
+        code: INVALID_PARAMS_ERROR_CODE,
+        message: format!("invalid background terminal process id `{process_id}`: {err}"),
+        data: None,
+    })
+}
+
+fn background_terminal_from_core(
+    summary: codex_core::BackgroundTerminalSummary,
+) -> BackgroundTerminal {
+    let attached = summary.attachment_state.is_user_attached();
+    let secure_input_prompt = match &summary.attachment_state {
+        BackgroundTerminalAttachmentState::SecureInputPending { kind, .. } => {
+            Some(kind.clone().into())
+        }
+        BackgroundTerminalAttachmentState::Detached
+        | BackgroundTerminalAttachmentState::UserAttached { .. } => None,
+    };
+
+    BackgroundTerminal {
+        process_id: summary.process_id.to_string(),
+        command: summary.command.join(" "),
+        tty: summary.tty,
+        attached,
+        secure_input_prompt,
+    }
+}
+
+fn refresh_background_terminal_summary_state(
+    mut summary: codex_core::BackgroundTerminalSummary,
+    secure_input_prompt: Option<TerminalInputRedactionKind>,
+) -> codex_core::BackgroundTerminalSummary {
+    summary.attachment_state = match (summary.attachment_state, secure_input_prompt) {
+        (BackgroundTerminalAttachmentState::Detached, _) => {
+            BackgroundTerminalAttachmentState::Detached
+        }
+        (
+            BackgroundTerminalAttachmentState::UserAttached { owner_id }
+            | BackgroundTerminalAttachmentState::SecureInputPending { owner_id, .. },
+            Some(kind),
+        ) => BackgroundTerminalAttachmentState::SecureInputPending { owner_id, kind },
+        (
+            BackgroundTerminalAttachmentState::UserAttached { owner_id }
+            | BackgroundTerminalAttachmentState::SecureInputPending { owner_id, .. },
+            None,
+        ) => BackgroundTerminalAttachmentState::UserAttached { owner_id },
+    };
+    summary
+}
+
+fn detect_secret_prompt(output: &str) -> Option<TerminalInputRedactionKind> {
+    let output = output.trim_end();
+    if output.is_empty() {
+        return None;
+    }
+
+    let normalized = output.to_ascii_lowercase();
+    if normalized.contains("enter passphrase for key") || normalized.contains("passphrase:") {
+        return Some(TerminalInputRedactionKind::Passphrase);
+    }
+    if normalized.contains("sudo password for")
+        || normalized.contains("password for")
+        || normalized.contains("password:")
+    {
+        return Some(TerminalInputRedactionKind::Password);
+    }
+    if normalized.contains("pin for") || normalized.contains("pin:") {
+        return Some(TerminalInputRedactionKind::Pin);
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -10703,5 +11348,56 @@ mod tests {
         );
         assert!(!manager.has_subscribers(thread_id).await);
         Ok(())
+    }
+
+    #[test]
+    fn background_terminal_mapping_marks_attached_secure_prompt_state() {
+        let terminal = background_terminal_from_core(codex_core::BackgroundTerminalSummary {
+            process_id: 42,
+            call_id: "call".to_string(),
+            command: vec!["git".to_string(), "push".to_string()],
+            tty: true,
+            attachment_state: BackgroundTerminalAttachmentState::SecureInputPending {
+                owner_id: "conn-1".to_string(),
+                kind: TerminalInputRedactionKind::Password,
+            },
+            recent_output: Vec::new(),
+        });
+
+        assert_eq!(terminal.process_id, "42");
+        assert_eq!(terminal.command, "git push");
+        assert!(terminal.attached);
+        assert_eq!(
+            terminal.secure_input_prompt,
+            Some(codex_app_server_protocol::TerminalInputRedactionKind::Password)
+        );
+    }
+
+    #[test]
+    fn detect_secret_prompt_matches_common_password_flows() {
+        assert_eq!(
+            detect_secret_prompt("Enter passphrase for key '/tmp/id_ed25519': "),
+            Some(TerminalInputRedactionKind::Passphrase)
+        );
+        assert_eq!(
+            detect_secret_prompt("[sudo] password for user: "),
+            Some(TerminalInputRedactionKind::Password)
+        );
+        assert_eq!(
+            detect_secret_prompt("PIN for token: "),
+            Some(TerminalInputRedactionKind::Pin)
+        );
+        assert_eq!(detect_secret_prompt("fetching objects..."), None);
+    }
+
+    #[test]
+    fn parse_background_terminal_process_id_rejects_invalid_values() {
+        let err = parse_background_terminal_process_id("abc")
+            .expect_err("invalid process id should fail");
+        assert_eq!(err.code, INVALID_PARAMS_ERROR_CODE);
+        assert!(
+            err.message
+                .contains("invalid background terminal process id")
+        );
     }
 }

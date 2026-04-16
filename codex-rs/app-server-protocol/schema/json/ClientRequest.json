@@ -2645,6 +2645,15 @@
       },
       "type": "object"
     },
+    "TerminalInputRedactionKind": {
+      "enum": [
+        "password",
+        "passphrase",
+        "pin",
+        "unknown"
+      ],
+      "type": "string"
+    },
     "TextElement": {
       "properties": {
         "byteRange": {
@@ -2669,6 +2678,108 @@
       "type": "object"
     },
     "ThreadArchiveParams": {
+      "properties": {
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId"
+      ],
+      "type": "object"
+    },
+    "ThreadBackgroundTerminalAttachParams": {
+      "properties": {
+        "processId": {
+          "type": "string"
+        },
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "processId",
+        "threadId"
+      ],
+      "type": "object"
+    },
+    "ThreadBackgroundTerminalDetachParams": {
+      "properties": {
+        "processId": {
+          "type": "string"
+        },
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "processId",
+        "threadId"
+      ],
+      "type": "object"
+    },
+    "ThreadBackgroundTerminalResizeParams": {
+      "properties": {
+        "processId": {
+          "type": "string"
+        },
+        "size": {
+          "$ref": "#/definitions/CommandExecTerminalSize"
+        },
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "processId",
+        "size",
+        "threadId"
+      ],
+      "type": "object"
+    },
+    "ThreadBackgroundTerminalWriteParams": {
+      "properties": {
+        "dataBase64": {
+          "type": "string"
+        },
+        "processId": {
+          "type": "string"
+        },
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "dataBase64",
+        "processId",
+        "threadId"
+      ],
+      "type": "object"
+    },
+    "ThreadBackgroundTerminalWriteSecretParams": {
+      "properties": {
+        "dataBase64": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/definitions/TerminalInputRedactionKind"
+        },
+        "processId": {
+          "type": "string"
+        },
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "dataBase64",
+        "kind",
+        "processId",
+        "threadId"
+      ],
+      "type": "object"
+    },
+    "ThreadBackgroundTerminalsListParams": {
       "properties": {
         "threadId": {
           "type": "string"
@@ -3954,6 +4065,150 @@
         "params"
       ],
       "title": "Thread/shellCommandRequest",
+      "type": "object"
+    },
+    {
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "enum": [
+            "thread/backgroundTerminals/list"
+          ],
+          "title": "Thread/backgroundTerminals/listRequestMethod",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/definitions/ThreadBackgroundTerminalsListParams"
+        }
+      },
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "title": "Thread/backgroundTerminals/listRequest",
+      "type": "object"
+    },
+    {
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "enum": [
+            "thread/backgroundTerminal/attach"
+          ],
+          "title": "Thread/backgroundTerminal/attachRequestMethod",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/definitions/ThreadBackgroundTerminalAttachParams"
+        }
+      },
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "title": "Thread/backgroundTerminal/attachRequest",
+      "type": "object"
+    },
+    {
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "enum": [
+            "thread/backgroundTerminal/detach"
+          ],
+          "title": "Thread/backgroundTerminal/detachRequestMethod",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/definitions/ThreadBackgroundTerminalDetachParams"
+        }
+      },
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "title": "Thread/backgroundTerminal/detachRequest",
+      "type": "object"
+    },
+    {
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "enum": [
+            "thread/backgroundTerminal/write"
+          ],
+          "title": "Thread/backgroundTerminal/writeRequestMethod",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/definitions/ThreadBackgroundTerminalWriteParams"
+        }
+      },
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "title": "Thread/backgroundTerminal/writeRequest",
+      "type": "object"
+    },
+    {
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "enum": [
+            "thread/backgroundTerminal/writeSecret"
+          ],
+          "title": "Thread/backgroundTerminal/writeSecretRequestMethod",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/definitions/ThreadBackgroundTerminalWriteSecretParams"
+        }
+      },
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "title": "Thread/backgroundTerminal/writeSecretRequest",
+      "type": "object"
+    },
+    {
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "enum": [
+            "thread/backgroundTerminal/resize"
+          ],
+          "title": "Thread/backgroundTerminal/resizeRequestMethod",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/definitions/ThreadBackgroundTerminalResizeParams"
+        }
+      },
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "title": "Thread/backgroundTerminal/resizeRequest",
       "type": "object"
     },
     {

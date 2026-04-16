@@ -12,6 +12,7 @@ use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::ExecCommandSource;
 use codex_protocol::protocol::Op;
 use codex_protocol::protocol::SandboxPolicy;
+use codex_protocol::protocol::TerminalInputRecord;
 use codex_protocol::user_input::UserInput;
 use core_test_support::assert_regex_match;
 use core_test_support::process::process_is_alive;
@@ -833,7 +834,12 @@ async fn unified_exec_emits_terminal_interaction_for_write_stdin() -> Result<()>
         .get("chars")
         .and_then(Value::as_str)
         .expect("stdin chars");
-    assert_eq!(delta.stdin, expected_stdin);
+    assert_eq!(
+        delta.input,
+        TerminalInputRecord::Plaintext {
+            text: expected_stdin.to_string(),
+        }
+    );
     Ok(())
 }
 
@@ -988,7 +994,11 @@ async fn unified_exec_terminal_interaction_captures_delayed_output() -> Result<(
     assert_eq!(
         terminal_events
             .iter()
-            .map(|ev| ev.stdin.as_str())
+            .map(|ev| match &ev.input {
+                TerminalInputRecord::Plaintext { text } => text.as_str(),
+                TerminalInputRecord::Redacted { .. } => "<redacted>",
+                TerminalInputRecord::EmptyPoll => "",
+            })
             .collect::<Vec<_>>(),
         vec!["x", "x", "x"],
         "terminal interactions should reflect the three stdin polls"

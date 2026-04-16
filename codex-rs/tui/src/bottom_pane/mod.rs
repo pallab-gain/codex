@@ -43,6 +43,7 @@ use std::time::Duration;
 
 mod app_link_view;
 mod approval_overlay;
+mod background_terminal_secure_input;
 mod mcp_server_elicitation;
 mod multi_select_picker;
 mod request_user_input;
@@ -55,6 +56,7 @@ pub(crate) use app_link_view::AppLinkViewParams;
 pub(crate) use approval_overlay::ApprovalOverlay;
 pub(crate) use approval_overlay::ApprovalRequest;
 pub(crate) use approval_overlay::format_requested_permissions_rule;
+pub(crate) use background_terminal_secure_input::BackgroundTerminalSecureInputView;
 pub(crate) use mcp_server_elicitation::McpServerElicitationFormRequest;
 pub(crate) use mcp_server_elicitation::McpServerElicitationOverlay;
 pub(crate) use request_user_input::RequestUserInputOverlay;
