@@ -16,7 +16,6 @@ use codex_protocol::error::CodexErr;
 use codex_protocol::error::Result as CodexResult;
 use codex_protocol::mcp::CallToolResult;
 use codex_protocol::models::ContentItem;
-use codex_protocol::models::ResponseInputItem;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::openai_models::ReasoningEffort;
 use codex_protocol::protocol::AskForApproval;
@@ -160,25 +159,14 @@ impl CodexThread {
             end_turn: None,
             phase: None,
         };
-        let pending_item = match pending_message_input_item(&message) {
-            Ok(pending_item) => pending_item,
-            Err(err) => {
-                debug_assert!(false, "session-prefix message append should succeed: {err}");
-                return;
-            }
-        };
         if self
             .codex
             .session
-            .inject_response_items(vec![pending_item])
+            .append_message_without_turn(message)
             .await
             .is_err()
         {
-            let turn_context = self.codex.session.new_default_turn().await;
-            self.codex
-                .session
-                .record_conversation_items(turn_context.as_ref(), &[message])
-                .await;
+            debug_assert!(false, "session-prefix message append should succeed");
         }
     }
 
@@ -187,22 +175,17 @@ impl CodexThread {
     /// If the thread already has an active turn, the message is queued as pending input for that
     /// turn. Otherwise it is queued at session scope and a regular turn is started so the agent
     /// can consume that pending input through the normal turn pipeline.
-    #[cfg(test)]
     pub(crate) async fn append_message(&self, message: ResponseItem) -> CodexResult<String> {
         let submission_id = uuid::Uuid::new_v4().to_string();
-        let pending_item = pending_message_input_item(&message)?;
-        if let Err(items) = self
-            .codex
+        self.codex
             .session
-            .inject_response_items(vec![pending_item])
+            .append_message_without_turn(message)
             .await
-        {
-            self.codex
-                .session
-                .queue_response_items_for_next_turn(items)
-                .await;
-            self.codex.session.maybe_start_turn_for_pending_work().await;
-        }
+            .map_err(|()| {
+                CodexErr::InvalidRequest(
+                    "append_message only supports ResponseItem::Message".to_string(),
+                )
+            })?;
 
         Ok(submission_id)
     }
@@ -434,17 +417,5 @@ impl CodexThread {
         }
 
         Ok(*guard)
-    }
-}
-
-fn pending_message_input_item(message: &ResponseItem) -> CodexResult<ResponseInputItem> {
-    match message {
-        ResponseItem::Message { role, content, .. } => Ok(ResponseInputItem::Message {
-            role: role.clone(),
-            content: content.clone(),
-        }),
-        _ => Err(CodexErr::InvalidRequest(
-            "append_message only supports ResponseItem::Message".to_string(),
-        )),
     }
 }

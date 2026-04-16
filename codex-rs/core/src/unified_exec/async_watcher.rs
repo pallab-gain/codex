@@ -1,5 +1,7 @@
 use std::pin::Pin;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
 
 use tokio::sync::Mutex;
 use tokio::time::Duration;
@@ -18,6 +20,8 @@ use crate::tools::events::ToolEventStage;
 use crate::unified_exec::head_tail_buffer::HeadTailBuffer;
 use codex_protocol::exec_output::ExecToolCallOutput;
 use codex_protocol::exec_output::StreamOutput;
+use codex_protocol::models::ContentItem;
+use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::ExecCommandOutputDeltaEvent;
 use codex_protocol::protocol::ExecCommandSource;
@@ -33,6 +37,7 @@ pub(crate) const TRAILING_OUTPUT_GRACE: Duration = Duration::from_millis(100);
 /// downstream event consumers (especially app-server JSON-RPC) don't have to
 /// process arbitrarily large delta payloads.
 const UNIFIED_EXEC_OUTPUT_DELTA_MAX_BYTES: usize = 8192;
+const BACKGROUND_TERMINAL_RESUME_OUTPUT_CHAR_LIMIT: usize = 4_000;
 
 /// Spawn a background task that continuously reads from the PTY, appends to the
 /// shared transcript, and emits ExecCommandOutputDelta events on UTF‑8
@@ -113,6 +118,7 @@ pub(crate) fn spawn_exit_watcher(
     cwd: AbsolutePathBuf,
     process_id: i32,
     transcript: Arc<Mutex<HeadTailBuffer>>,
+    resume_after_user_interaction: Arc<AtomicBool>,
     started_at: Instant,
 ) {
     let exit_token = process.cancellation_token();
@@ -123,26 +129,34 @@ pub(crate) fn spawn_exit_watcher(
         output_drained.notified().await;
 
         let duration = Instant::now().saturating_duration_since(started_at);
-        if let Some(message) = process.failure_message() {
+        let (exit_code, aggregated_output) = if let Some(message) = process.failure_message() {
+            let aggregated_output = resolve_aggregated_output(&transcript, String::new()).await;
             emit_failed_exec_end_for_unified_exec(
-                session_ref,
-                turn_ref,
-                call_id,
-                command,
-                cwd,
+                Arc::clone(&session_ref),
+                Arc::clone(&turn_ref),
+                call_id.clone(),
+                command.clone(),
+                cwd.clone(),
                 Some(process_id.to_string()),
-                transcript,
-                message,
+                Arc::clone(&transcript),
+                message.clone(),
                 duration,
             )
             .await;
+            let aggregated_output = if aggregated_output.is_empty() {
+                message
+            } else {
+                format!("{aggregated_output}\n{message}")
+            };
+            (-1, aggregated_output)
         } else {
             let exit_code = process.exit_code().unwrap_or(-1);
+            let aggregated_output = resolve_aggregated_output(&transcript, String::new()).await;
             emit_exec_end_for_unified_exec(
-                session_ref,
-                turn_ref,
+                Arc::clone(&session_ref),
+                Arc::clone(&turn_ref),
                 call_id,
-                command,
+                command.clone(),
                 cwd,
                 Some(process_id.to_string()),
                 transcript,
@@ -151,8 +165,70 @@ pub(crate) fn spawn_exit_watcher(
                 duration,
             )
             .await;
+            (exit_code, aggregated_output)
+        };
+
+        if resume_after_user_interaction.load(Ordering::Relaxed) {
+            let _ = session_ref
+                .append_message_without_turn(background_terminal_completion_message(
+                    &command,
+                    exit_code,
+                    &aggregated_output,
+                ))
+                .await;
         }
     });
+}
+
+fn background_terminal_completion_message(
+    command: &[String],
+    exit_code: i32,
+    aggregated_output: &str,
+) -> ResponseItem {
+    let command_display = if command.is_empty() {
+        "<unknown>".to_string()
+    } else {
+        command.join(" ")
+    };
+    let output = trim_terminal_resume_output(aggregated_output);
+    let mut text = format!(
+        "A background terminal you previously started finished after the user interacted with it.\nCommand: {command_display}\nExit code: {exit_code}\n"
+    );
+    if output.is_empty() {
+        text.push_str("No terminal output was captured.\n");
+    } else {
+        text.push_str("Recent terminal output:\n```text\n");
+        text.push_str(&output);
+        if !output.ends_with('\n') {
+            text.push('\n');
+        }
+        text.push_str("```\n");
+    }
+    text.push_str("Continue the task using this result and inspect the current repository state before deciding next steps.");
+
+    ResponseItem::Message {
+        id: None,
+        role: "user".to_string(),
+        content: vec![ContentItem::InputText { text }],
+        end_turn: None,
+        phase: None,
+    }
+}
+
+fn trim_terminal_resume_output(output: &str) -> String {
+    let trimmed = output.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+
+    let total_chars = trimmed.chars().count();
+    if total_chars <= BACKGROUND_TERMINAL_RESUME_OUTPUT_CHAR_LIMIT {
+        return trimmed.to_string();
+    }
+
+    let skip = total_chars.saturating_sub(BACKGROUND_TERMINAL_RESUME_OUTPUT_CHAR_LIMIT);
+    let tail = trimmed.chars().skip(skip).collect::<String>();
+    format!("…{tail}")
 }
 
 async fn process_chunk(

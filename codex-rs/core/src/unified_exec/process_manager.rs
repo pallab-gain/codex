@@ -183,6 +183,7 @@ struct PreparedProcessHandles {
     process_id: i32,
     tty: bool,
     attachment_state: AttachmentState,
+    resume_after_user_interaction: Arc<AtomicBool>,
 }
 
 enum TerminalWriter<'a> {
@@ -627,6 +628,7 @@ impl UnifiedExecProcessManager {
             process_id,
             tty,
             attachment_state,
+            resume_after_user_interaction,
         } = self.prepare_process_handles(process_id).await?;
         let mut status_after_write = None;
 
@@ -641,6 +643,10 @@ impl UnifiedExecProcessManager {
                 });
             }
             TerminalWriter::Model | TerminalWriter::User { .. } => {}
+        }
+
+        if !request.input.is_empty() && matches!(writer, TerminalWriter::User { .. }) {
+            resume_after_user_interaction.store(true, Ordering::Relaxed);
         }
 
         if !request.input.is_empty() {
@@ -807,6 +813,7 @@ impl UnifiedExecProcessManager {
             process_id: entry.process_id,
             tty: entry.tty,
             attachment_state: entry.attachment_state.clone(),
+            resume_after_user_interaction: Arc::clone(&entry.resume_after_user_interaction),
         })
     }
 
@@ -823,6 +830,7 @@ impl UnifiedExecProcessManager {
         network_approval_id: Option<String>,
         transcript: Arc<tokio::sync::Mutex<HeadTailBuffer>>,
     ) {
+        let resume_after_user_interaction = Arc::new(AtomicBool::new(false));
         let entry = ProcessEntry {
             process: Arc::clone(&process),
             call_id: context.call_id.clone(),
@@ -833,6 +841,7 @@ impl UnifiedExecProcessManager {
             session: Arc::downgrade(&context.session),
             transcript: Arc::clone(&transcript),
             attachment_state: AttachmentState::Detached,
+            resume_after_user_interaction: Arc::clone(&resume_after_user_interaction),
             last_used: started_at,
         };
         let (number_processes, pruned_entry) = {
@@ -867,6 +876,7 @@ impl UnifiedExecProcessManager {
             cwd,
             process_id,
             transcript,
+            resume_after_user_interaction,
             started_at,
         );
     }

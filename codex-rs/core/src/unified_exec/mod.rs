@@ -26,6 +26,7 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::Weak;
+use std::sync::atomic::AtomicBool;
 
 use codex_network_proxy::NetworkProxy;
 use codex_protocol::models::PermissionProfile;
@@ -208,6 +209,7 @@ struct ProcessEntry {
     session: Weak<Session>,
     transcript: Arc<tokio::sync::Mutex<head_tail_buffer::HeadTailBuffer>>,
     attachment_state: AttachmentState,
+    resume_after_user_interaction: Arc<AtomicBool>,
     last_used: tokio::time::Instant,
 }
 

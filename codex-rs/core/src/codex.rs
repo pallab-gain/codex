@@ -4313,6 +4313,28 @@ impl Session {
         }
     }
 
+    pub(crate) async fn append_message_without_turn(
+        self: &Arc<Self>,
+        message: ResponseItem,
+    ) -> Result<(), ()> {
+        let pending_item = match &message {
+            ResponseItem::Message { role, content, .. } => ResponseInputItem::Message {
+                role: role.clone(),
+                content: content.clone(),
+            },
+            _ => return Err(()),
+        };
+
+        if let Err(items) = self.inject_response_items(vec![pending_item]).await {
+            let mut idle_pending_input = self.idle_pending_input.lock().await;
+            idle_pending_input.extend(items);
+            drop(idle_pending_input);
+            self.maybe_start_turn_for_pending_work().await;
+        }
+
+        Ok(())
+    }
+
     pub(crate) async fn defer_mailbox_delivery_to_next_turn(&self, sub_id: &str) {
         let turn_state = self.turn_state_for_sub_id(sub_id).await;
         let Some(turn_state) = turn_state else {
