@@ -18,6 +18,7 @@ use pretty_assertions::assert_eq;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use tokio::time::Duration;
 use tokio::time::Instant;
 
@@ -119,6 +120,7 @@ async fn exec_command_with_tty(
             session: Arc::downgrade(session),
             transcript: Arc::new(tokio::sync::Mutex::new(HeadTailBuffer::default())),
             attachment_state: AttachmentState::Detached,
+            resume_after_user_interaction: Arc::new(AtomicBool::new(false)),
             last_used: started_at,
         };
         manager

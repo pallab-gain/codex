@@ -15,6 +15,7 @@ use pretty_assertions::assert_eq;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::Weak;
+use std::sync::atomic::AtomicBool;
 use tokio::sync::Mutex;
 use tokio::time::Duration;
 use tokio::time::Instant;
@@ -238,6 +239,7 @@ async fn insert_background_terminal(
         session: Weak::new(),
         transcript: Arc::new(Mutex::new(HeadTailBuffer::default())),
         attachment_state: AttachmentState::Detached,
+        resume_after_user_interaction: Arc::new(AtomicBool::new(false)),
         last_used: Instant::now(),
     };
     manager
